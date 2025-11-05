@@ -1,129 +1,198 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
-	"time"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-
+	"github.com/awesome-gocui/gocui"
 	"github.com/Linux-DEX/azstorecli/pkg/storage"
 )
 
-// --- Model ---
+// --- Globals ---
+var logChan <-chan string
 
-type model struct {
-	viewport viewport.Model
-	logs     string
-	width    int
-	height   int
-	quitting bool
-	logChan  <-chan string
-}
-
-type tickMsg time.Time
-type logMsg string
-
-// --- Program entrypoint ---
-
+// --- Entry point ---
 func RunApp() error {
-	p := tea.NewProgram(initialModel(), tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
-		return fmt.Errorf("failed to run UI: %w", err)
+	g, err := gocui.NewGui(gocui.OutputNormal, true)
+	if err != nil {
+		return fmt.Errorf("failed to init gocui: %w", err)
+	}
+	defer g.Close()
+
+	g.Cursor = false
+	g.SetManagerFunc(layout)
+
+	// --- Keybindings ---
+	keys := []struct {
+		view string
+		key  interface{}
+		mod  gocui.Modifier
+		h    func(*gocui.Gui, *gocui.View) error
+	}{
+		{"", gocui.KeyCtrlC, gocui.ModNone, quit},
+		{"", 'q', gocui.ModNone, quit},
+		{"", 'r', gocui.ModNone, reattachLogs},
+		{"", gocui.KeyArrowUp, gocui.ModNone, scrollUp},
+		{"", gocui.KeyArrowDown, gocui.ModNone, scrollDown},
+		{"", gocui.KeyPgup, gocui.ModNone, pageUp},
+		{"", gocui.KeyPgdn, gocui.ModNone, pageDown},
+	}
+	for _, kb := range keys {
+		if err := g.SetKeybinding(kb.view, kb.key, kb.mod, kb.h); err != nil {
+			return err
+		}
+	}
+
+	// --- Start Azurite logs ---
+	logChan, _ = storage.StartAzurite()
+
+	// --- Log listener goroutine ---
+	go func() {
+		for line := range logChan {
+			g.Update(func(gui *gocui.Gui) error {
+				v, err := gui.View("logs")
+				if err != nil {
+					return nil
+				}
+
+				fmt.Fprint(v, line)
+				lines := len(v.BufferLines())
+				_, sy := v.Size()
+				_, oy := v.Origin()
+
+				// Scroll to bottom only if already near bottom
+				if oy+sy >= lines-2 {
+					if lines > sy {
+						v.SetOrigin(0, lines-sy)
+					}
+				}
+				return nil
+			})
+		}
+	}()
+
+	// --- Main loop ---
+	if err := g.MainLoop(); err != nil && !errors.Is(err, gocui.ErrQuit) {
+		return err
 	}
 	return nil
 }
 
-// --- Initialization ---
-func initialModel() model {
-	vp := viewport.New(100, 30)
-	vp.MouseWheelEnabled = true // Enable mouse wheel scrolling
-	vp.SetContent("Starting Azurite...\n")
-	logChan, _ := storage.StartAzurite()
-	return model{viewport: vp, logChan: logChan}
-}
+// --- Layout ---
+func layout(g *gocui.Gui) error {
+	maxX, maxY := g.Size()
 
-// --- Cmd to read from log channel ---
-
-func waitForLogLine(ch <-chan string) tea.Cmd {
-	return func() tea.Msg {
-		line, ok := <-ch
-		if !ok {
-			return nil // channel closed
+	// Header
+	if v, err := g.SetView("header", 0, 0, maxX-1, 2, 0); err != nil {
+		if !errors.Is(err, gocui.ErrUnknownView) {
+			return err
 		}
-		return logMsg(line)
+		v.Frame = true
+		v.Title = "AZURE STORAGE LOCAL (Azurite Logs)"
+		fmt.Fprintln(v, "Press [Q] to Quit | [R] to Reattach Logs")
 	}
-}
 
-// --- Bubble Tea lifecycle ---
-
-func (m model) Init() tea.Cmd {
-	return tea.Batch(
-		tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }),
-		waitForLogLine(m.logChan),
-	)
-}
-
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "q", "ctrl+c":
-			m.quitting = true
-			storage.StopAzurite()
-			return m, tea.Quit
-		case "r":
-			m.logs = "Re-attaching Azurite logs...\n"
-			m.viewport.SetContent(m.logs)
-			id := storage.GetAzuriteContainerID()
-			newChan, _ := storage.AttachLogs(id)
-			m.logChan = newChan
-			return m, waitForLogLine(m.logChan)
-		case "up", "k":
-			m.viewport.ScrollUp(1)
-			return m, nil
-		case "down", "j":
-			m.viewport.ScrollDown(1)
-			return m, nil
-		case "pgup":
-			m.viewport.PageUp()
-			return m, nil
-		case "pgdown":
-			m.viewport.PageDown()
-			return m, nil
-		case "ctrl+d":
-			m.viewport.HalfPageDown()
-			return m, nil
-		case "ctrl+u":
-			m.viewport.HalfPageUp()
-			return m, nil
+	// Logs view
+	if v, err := g.SetView("logs", 0, 3, maxX-1, maxY-2, 0); err != nil {
+		if !errors.Is(err, gocui.ErrUnknownView) {
+			return err
 		}
-
-	case tickMsg:
-		return m, tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
-
-	case logMsg:
-		m.logs += string(msg)
-		m.viewport.SetContent(m.logs)
-		// Auto-scroll to bottom on new logs:
-		m.viewport.GotoBottom()
-		return m, waitForLogLine(m.logChan)
-
-	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width, msg.Height
-		m.viewport.Width = msg.Width - 2
-		m.viewport.Height = msg.Height - 3
+		v.Title = "Azurite Output"
+		v.Wrap = true
+		v.Autoscroll = false // manual scrolling
 	}
-	return m, nil
+
+	return nil
 }
 
-func (m model) View() string {
-	if m.quitting {
-		return "Exiting..."
-	}
-	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6")).Render("AZURE STORAGE LOCAL (Azurite Logs)")
-	footer := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render("[Q] Quit | [R] Reattach Logs")
-	content := m.viewport.View()
-	return lipgloss.JoinVertical(lipgloss.Left, header, content, footer)
+// --- Handlers ---
+func quit(g *gocui.Gui, v *gocui.View) error {
+	storage.StopAzurite()
+	return gocui.ErrQuit
 }
+
+func reattachLogs(g *gocui.Gui, v *gocui.View) error {
+	logView, err := g.View("logs")
+	if err != nil {
+		return err
+	}
+	logView.Clear()
+	fmt.Fprintln(logView, "Reattaching Azurite logs...\n")
+	id := storage.GetAzuriteContainerID()
+	newChan, _ := storage.AttachLogs(id)
+	logChan = newChan
+	return nil
+}
+
+func scrollUp(g *gocui.Gui, v *gocui.View) error {
+	if v == nil {
+		var err error
+		v, err = g.View("logs")
+		if err != nil {
+			return err
+		}
+	}
+	ox, oy := v.Origin()
+	if oy > 0 {
+		v.SetOrigin(ox, oy-1)
+	}
+	return nil
+}
+
+func scrollDown(g *gocui.Gui, v *gocui.View) error {
+	if v == nil {
+		var err error
+		v, err = g.View("logs")
+		if err != nil {
+			return err
+		}
+	}
+	ox, oy := v.Origin()
+	lines := len(v.BufferLines())
+	_, sy := v.Size()
+	if oy+sy < lines {
+		v.SetOrigin(ox, oy+1)
+	}
+	return nil
+}
+
+func pageUp(g *gocui.Gui, v *gocui.View) error {
+	if v == nil {
+		var err error
+		v, err = g.View("logs")
+		if err != nil {
+			return err
+		}
+	}
+	ox, oy := v.Origin()
+	_, sy := v.Size()
+	newY := oy - sy
+	if newY < 0 {
+		newY = 0
+	}
+	v.SetOrigin(ox, newY)
+	return nil
+}
+
+func pageDown(g *gocui.Gui, v *gocui.View) error {
+	if v == nil {
+		var err error
+		v, err = g.View("logs")
+		if err != nil {
+			return err
+		}
+	}
+	ox, oy := v.Origin()
+	lines := len(v.BufferLines())
+	_, sy := v.Size()
+	newY := oy + sy
+	if newY+sy > lines {
+		newY = lines - sy
+		if newY < 0 {
+			newY = 0
+		}
+	}
+	v.SetOrigin(ox, newY)
+	return nil
+}
+
