@@ -4,12 +4,15 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/awesome-gocui/gocui"
 	"github.com/Linux-DEX/azstorecli/pkg/storage"
+	"github.com/awesome-gocui/gocui"
 )
 
 // --- Globals ---
-var logChan <-chan string
+var (
+	logChan <-chan string
+	showPopup = true
+)
 
 // --- Entry point ---
 func RunApp() error {
@@ -36,6 +39,7 @@ func RunApp() error {
 		{"", gocui.KeyArrowDown, gocui.ModNone, scrollDown},
 		{"", gocui.KeyPgup, gocui.ModNone, pageUp},
 		{"", gocui.KeyPgdn, gocui.ModNone, pageDown},
+		{"", gocui.KeyEsc, gocui.ModNone, closePopup},
 	}
 	for _, kb := range keys {
 		if err := g.SetKeybinding(kb.view, kb.key, kb.mod, kb.h); err != nil {
@@ -100,6 +104,34 @@ func layout(g *gocui.Gui) error {
 		v.Title = "Azurite Output"
 		v.Wrap = true
 		v.Autoscroll = false // manual scrolling
+	}
+
+	if showPopup {
+		width := 70
+		height := 20
+		x0 := (maxX - width) / 2
+		y0 := (maxY - height) / 2
+		x1 := x0 + width
+		y1 := y0 + height
+
+		if v, err := g.SetView("popup", x0, y0, x1, y1, 0); err != nil {
+			if !errors.Is(err, gocui.ErrUnknownView) {
+				return err
+			}
+			v.Title = "Welcome!"
+			v.Wrap = true
+			v.Frame = true
+
+			fmt.Fprintln(v, "Welcome to azstorecli TUI for Azure Storage Explorer for Development\n")
+			fmt.Fprintln(v, "Sample keybindings:")
+			fmt.Fprintln(v, "  ↑ / ↓  : Scroll logs")
+			fmt.Fprintln(v, "  PgUp/PgDn : Page scroll")
+			fmt.Fprintln(v, "  R      : Reattach logs")
+			fmt.Fprintln(v, "  Q / Ctrl+C : Quit")
+			fmt.Fprintln(v, "\nPress [ESC] to close this popup.")
+		}
+	} else {
+		g.DeleteView("popup")
 	}
 
 	return nil
@@ -196,3 +228,10 @@ func pageDown(g *gocui.Gui, v *gocui.View) error {
 	return nil
 }
 
+func closePopup(g *gocui.Gui, v *gocui.View) error {
+	if showPopup {
+		showPopup = false
+		return g.DeleteView("popup")
+	}
+	return nil
+}
