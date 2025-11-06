@@ -26,7 +26,7 @@ var (
 	rightData = map[string][]string{
 		"images": {"cat.png", "dog.jpg", "sunset.png"},
 		"videos": {"intro.mp4", "trailer.mov"},
-		"users":   {"alice", "bob", "charlie"},
+		"users":  {"alice", "bob", "charlie"},
 	}
 
 	focusSide = "left" // "left", "right", "logs"
@@ -111,16 +111,30 @@ func layout(g *gocui.Gui) error {
 	leftWidth := maxX / 3
 	contentTop := 1
 	contentBottom := maxY - 1
+	totalHeight := contentBottom - contentTop + 1
 
-	// Left panel (no change needed here)
-	boxHeight := (contentBottom - contentTop) / len(leftSections)
+	// --- Left panel: distribute heights evenly and handle remainder ---
+	heights := make([]int, len(leftSections))
+	baseHeight := totalHeight / len(leftSections)
+	remainder := totalHeight % len(leftSections)
+	for i := range heights {
+		heights[i] = baseHeight
+		if i < remainder {
+			heights[i]++ // distribute leftover pixels to top sections
+		}
+	}
+
+	y := contentTop
 	for i, name := range leftSections {
-		y0 := contentTop + i*boxHeight
-		y1 := y0 + boxHeight - 1
+		y0 := y
+		y1 := y + heights[i] - 1
+		y = y1 + 1
+
 		v, err := g.SetView(name, 0, y0, leftWidth-1, y1, 0)
 		if err != nil && !errors.Is(err, gocui.ErrUnknownView) {
 			return err
 		}
+
 		v.Clear()
 		v.Title = name
 		v.Wrap = true
@@ -143,26 +157,24 @@ func layout(g *gocui.Gui) error {
 		}
 	}
 
-	// Right panel (Modified to host either content or logs)
-	right, err := g.SetView("right", leftWidth+1, contentTop, maxX-1, contentBottom-1, 0)
+	// --- Right panel: full height to match left ---
+	right, err := g.SetView("right", leftWidth, contentTop, maxX-1, contentBottom, 0)
 	if err != nil && !errors.Is(err, gocui.ErrUnknownView) {
 		return err
 	}
 	right.Clear()
 	right.Wrap = true
-	right.Autoscroll = false // Reset autoscroll
+	right.Autoscroll = false
 
 	if showLogs {
-		// Log View Mode
 		right.Title = "Azurite Logs (press L to hide, R to reattach)"
-		right.Highlight = false // No highlighting for logs
-		right.Autoscroll = true // Autoscroll for new log lines
+		right.Highlight = false
+		right.Autoscroll = true
 
 		for _, line := range logsBuf {
 			fmt.Fprintln(right, line)
 		}
 	} else {
-		// Content View Mode
 		right.Title = fmt.Sprintf("Contents of %s", leftSections[activeSection])
 		right.Highlight = true
 		right.SelFgColor = gocui.ColorCyan
@@ -180,7 +192,6 @@ func layout(g *gocui.Gui) error {
 					}
 					fmt.Fprintf(right, "%s%s\n", prefix, b)
 				}
-
 				if focusSide == "right" {
 					right.SetCursor(0, activeRightIndex)
 				} else {
@@ -193,14 +204,13 @@ func layout(g *gocui.Gui) error {
 			fmt.Fprintln(right, "No items found.")
 		}
 	}
-	
-	// Ensure cursor is visible if focus is on a scrollable view (logs)
+
+	// Ensure cursor is visible for logs
 	if showLogs && focusSide == "logs" {
-		right.SetCursor(0, 0) // Reset cursor to 0,0, origin handles actual display
+		right.SetCursor(0, 0)
 	}
 
-
-	// Popup
+	// --- Popup ---
 	if showPopup {
 		popupW, popupH := 60, 10
 		x0 := (maxX - popupW) / 2
@@ -253,7 +263,7 @@ func moveDown(g *gocui.Gui, v *gocui.View) error {
 	if showLogs { // If logs are shown, 'j' scrolls down the logs
 		return scrollLogsDown(g)
 	}
-	
+
 	if focusSide == "left" {
 		current := leftSections[activeSection]
 		items := leftData[current]
@@ -313,17 +323,16 @@ func handleEsc(g *gocui.Gui, v *gocui.View) error {
 	return nil
 }
 
-
 // --- Logs ---
 func toggleLogs(g *gocui.Gui, v *gocui.View) error {
 	showLogs = !showLogs
-	
+
 	// The focusSide controls how J/K/Enter behave
 	if showLogs {
 		focusSide = "logs"
 	} else {
 		// When logs are hidden, revert to left panel focus
-		focusSide = "left" 
+		focusSide = "left"
 	}
 	g.Update(func(gui *gocui.Gui) error { return nil })
 	return nil
@@ -354,7 +363,7 @@ func listenLogs(g *gocui.Gui) {
 			if showLogs {
 				g.UpdateAsync(func(gui *gocui.Gui) error { return nil })
 			}
-		case <-time.After(10 * time.Millisecond): 
+		case <-time.After(10 * time.Millisecond):
 		}
 	}
 }
@@ -384,7 +393,9 @@ func scrollLogsDown(g *gocui.Gui) error {
 }
 
 func scrollLogsUpPage(g *gocui.Gui, v *gocui.View) error {
-	if !showLogs { return nil }
+	if !showLogs {
+		return nil
+	}
 	for i := 0; i < 5; i++ {
 		scrollLogsUp(g)
 	}
@@ -392,7 +403,9 @@ func scrollLogsUpPage(g *gocui.Gui, v *gocui.View) error {
 }
 
 func scrollLogsDownPage(g *gocui.Gui, v *gocui.View) error {
-	if !showLogs { return nil }
+	if !showLogs {
+		return nil
+	}
 	for i := 0; i < 5; i++ {
 		scrollLogsDown(g)
 	}
