@@ -1,0 +1,8 @@
+# Placeholder theme definition. See dark.yaml for the loading note.
+name: light
+background: "#ffffff"
+foreground: "#1a1a1a"
+muted: "#6b6b6b"
+accent: "#0a66c2"
+border: "#d0d0d0"
+danger: "#c62828"
