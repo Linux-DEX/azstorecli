@@ -4,4 +4,4 @@
 # per-project live Azurite data — never commit
 .azstorecli/workspace/
 
-# go.sum is generated locally by `go mod tidy` / `make tidy`
+# go.sum is committed (GOFLAGS=-mod=mod)

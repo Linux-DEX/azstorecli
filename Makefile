@@ -1,16 +1,16 @@
 .PHONY: run build tidy fmt vet test
 
-run: 
+run:
 	go run ./cmd/azstore
 
-build: 
+build:
 	go build -o bin/azstore ./cmd/azstore
 
 tidy:
-	go mod tidy
+	GOFLAGS=-mod=mod go mod tidy
 
 fmt:
-	gofmt -l -w
+	gofmt -l -w .
 
 vet:
 	go vet ./...

@@ -1,50 +1,130 @@
 // Package theme holds the lipgloss style set used across every screen.
-// Screens should pull colors and styles from a Theme rather than
-// hardcoding lipgloss.Color values, so switching internal/theme/themes/*
-// actually re-skins the whole app.
+// Screens pull colours and styles from a Theme rather than hardcoding
+// lipgloss.Color values, so switching themes actually re-skins the app.
 package theme
 
 import "github.com/charmbracelet/lipgloss"
 
+// Palette is the colour half of a theme — the part a YAML file defines.
+type Palette struct {
+	Name       string `yaml:"name"`
+	Background string `yaml:"background"`
+	Foreground string `yaml:"foreground"`
+	Muted      string `yaml:"muted"`
+	Accent     string `yaml:"accent"`
+	Border     string `yaml:"border"`
+	Danger     string `yaml:"danger"`
+	Warning    string `yaml:"warning"`
+	Success    string `yaml:"success"`
+	Highlight  string `yaml:"highlight"`
+}
+
 // Theme is the full style set one screen needs to render consistently
 // with the rest of the app.
 type Theme struct {
-	Name string
+	Palette
 
-	Background lipgloss.Color
-	Foreground lipgloss.Color
-	Muted      lipgloss.Color
-	Accent     lipgloss.Color
-	Border     lipgloss.Color
-	Danger     lipgloss.Color
-
-	Title    lipgloss.Style
-	HelpBar  lipgloss.Style
-	StatusOK lipgloss.Style
-	StatusErr lipgloss.Style
-	Selected lipgloss.Style
+	Title      lipgloss.Style
+	Subtitle   lipgloss.Style
+	Muted      lipgloss.Style
+	Body       lipgloss.Style
+	HelpBar    lipgloss.Style
+	StatusBar  lipgloss.Style
+	StatusOK   lipgloss.Style
+	StatusWarn lipgloss.Style
+	StatusErr  lipgloss.Style
+	Selected   lipgloss.Style
+	Header     lipgloss.Style
+	Pane       lipgloss.Style
+	PaneActive lipgloss.Style
+	Modal      lipgloss.Style
+	Danger     lipgloss.Style
+	Badge      lipgloss.Style
+	Key        lipgloss.Style
 }
 
-// Dark is the built-in default theme. Additional themes (light, nord, ...)
-// live under internal/theme/themes/ as embedded YAML once the loader in
-// load.go (M7) reads user-selectable themes; this Go value is the
-// hardcoded fallback so the app never boots with zero styling.
-func Dark() Theme {
-	t := Theme{
-		Name:       "dark",
-		Background: lipgloss.Color("#0d0d0d"),
-		Foreground: lipgloss.Color("#e6e6e6"),
-		Muted:      lipgloss.Color("#8a8a8a"),
-		Accent:     lipgloss.Color("#5fb3ff"),
-		Border:     lipgloss.Color("#3a3a3a"),
-		Danger:     lipgloss.Color("#ff6b6b"),
+// Build derives every style from a palette. Every theme goes through
+// here, so a new style is defined once and every theme gets it.
+func Build(p Palette) Theme {
+	fill := func(value, fallback string) lipgloss.Color {
+		if value == "" {
+			return lipgloss.Color(fallback)
+		}
+		return lipgloss.Color(value)
 	}
 
-	t.Title = lipgloss.NewStyle().Bold(true).Foreground(t.Accent)
-	t.HelpBar = lipgloss.NewStyle().Foreground(t.Muted)
-	t.StatusOK = lipgloss.NewStyle().Foreground(lipgloss.Color("#7ec699"))
-	t.StatusErr = lipgloss.NewStyle().Foreground(t.Danger)
-	t.Selected = lipgloss.NewStyle().Bold(true).Foreground(t.Background).Background(t.Accent)
+	accent := fill(p.Accent, "#5fb3ff")
+	muted := fill(p.Muted, "#8a8a8a")
+	border := fill(p.Border, "#3a3a3a")
+	danger := fill(p.Danger, "#ff6b6b")
+	warning := fill(p.Warning, "#e2b93d")
+	success := fill(p.Success, "#7ec699")
+	fg := fill(p.Foreground, "#e6e6e6")
+	bg := fill(p.Background, "#0d0d0d")
 
+	t := Theme{Palette: p}
+	t.Title = lipgloss.NewStyle().Bold(true).Foreground(accent)
+	t.Subtitle = lipgloss.NewStyle().Foreground(fg).Bold(true)
+	t.Muted = lipgloss.NewStyle().Foreground(muted)
+	t.Body = lipgloss.NewStyle().Foreground(fg)
+	t.HelpBar = lipgloss.NewStyle().Foreground(muted)
+	t.StatusBar = lipgloss.NewStyle().Foreground(fg)
+	t.StatusOK = lipgloss.NewStyle().Foreground(success)
+	t.StatusWarn = lipgloss.NewStyle().Foreground(warning)
+	t.StatusErr = lipgloss.NewStyle().Foreground(danger)
+	t.Danger = lipgloss.NewStyle().Foreground(danger).Bold(true)
+	t.Selected = lipgloss.NewStyle().Bold(true).Foreground(bg).Background(accent)
+	t.Header = lipgloss.NewStyle().Bold(true).Foreground(muted)
+	t.Pane = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(border)
+	t.PaneActive = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent)
+	t.Modal = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent).Padding(1, 2)
+	t.Badge = lipgloss.NewStyle().Foreground(bg).Background(muted).Padding(0, 1)
+	t.Key = lipgloss.NewStyle().Bold(true).Foreground(accent)
 	return t
+}
+
+// Dark is the hardcoded fallback, so the app never boots unstyled even
+// if the embedded themes fail to parse.
+func Dark() Theme {
+	return Build(Palette{
+		Name:       "dark",
+		Background: "#0d0d0d",
+		Foreground: "#e6e6e6",
+		Muted:      "#8a8a8a",
+		Accent:     "#5fb3ff",
+		Border:     "#3a3a3a",
+		Danger:     "#ff6b6b",
+		Warning:    "#e2b93d",
+		Success:    "#7ec699",
+		Highlight:  "#2a3f5f",
+	})
+}
+
+// StateColor maps a service state name to its indicator style, so the
+// dashboard and the status bar can never disagree about what green means.
+func (t Theme) StateColor(state string) lipgloss.Style {
+	switch state {
+	case "healthy":
+		return t.StatusOK
+	case "starting":
+		return t.StatusWarn
+	case "unhealthy", "crashed":
+		return t.StatusErr
+	default:
+		return t.Muted
+	}
+}
+
+// StateGlyph is the dot shown next to a service name.
+func StateGlyph(state string) string {
+	switch state {
+	case "healthy":
+		return "●"
+	case "starting":
+		return "◐"
+	case "unhealthy", "crashed":
+		return "✖"
+	default:
+		return "⬡"
+	}
 }
