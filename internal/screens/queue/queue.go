@@ -47,6 +47,11 @@ type Model struct {
 	messages []storage.Message
 	watch    bool
 	showB64  bool
+
+	// cached layout, computed once in Resize() and reused by View() so the
+	// sizes handed to child components always match the sizes used to
+	// compose the final frame.
+	sideW, listH, prevH int
 }
 
 func New(deps Deps) *Model {
@@ -63,14 +68,63 @@ func New(deps Deps) *Model {
 }
 
 func (m *Model) Init() tea.Cmd { return m.loadQueues() }
+
+// frameSize returns how many columns/rows box() adds on top of a child
+// component's raw body: the border+padding cost of the pane style, plus
+// one row for the "title\n" header line that box() prepends. Deriving
+// this from the style itself (instead of a hardcoded constant) keeps the
+// layout correct even if the theme's border/padding changes.
+func (m *Model) frameSize() (h, v int) {
+	h = m.deps.Theme.Pane.GetHorizontalFrameSize()
+	v = m.deps.Theme.Pane.GetVerticalFrameSize() + 1 // +1 for the header line
+	return
+}
+
+func clamp(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
 func (m *Model) Resize(w, h int) {
 	m.w, m.h = w, h
-	sideW := min(24, max(m.w/4, 16))
-	prevH := min(10, m.h/3)
-	m.side.SetSize(sideW-2, m.h-2)
-	m.table.SetSize(max(m.w-sideW-2, 10), max(m.h-prevH-2, 4))
-	m.prev.SetSize(max(m.w-sideW-2, 10), prevH-2)
+	if w <= 0 || h <= 0 {
+		return
+	}
+	hFrame, vFrame := m.frameSize()
+
+	m.sideW = clamp(w/4, 16, 28)
+
+	if !ui.Wide(w) {
+		// Narrow layout: side pane is full-size on its own screen; the list
+		// screen stacks table body + preview body inside ONE box, so the
+		// two child components must split (h - frame) between them, not
+		// each get a fresh (h - frame).
+		m.side.SetSize(max(w-hFrame, 1), max(h-vFrame, 1))
+
+		m.prevH = clamp(h/3, 4, 10)
+		m.listH = h - m.prevH
+		innerH := max(h-vFrame, 1) // total inner rows available inside the single box
+		tableRows := clamp(innerH-m.prevH, 1, innerH-1)
+		prevRows := innerH - tableRows
+
+		m.table.SetSize(max(w-hFrame, 1), tableRows)
+		m.prev.SetSize(max(w-hFrame, 1), prevRows)
+		return
+	}
+
+	m.prevH = clamp(h/3, 4, 10)
+	m.listH = h - m.prevH
+
+	m.side.SetSize(max(m.sideW-hFrame, 1), max(h-vFrame, 1))
+	m.table.SetSize(max(w-m.sideW-hFrame, 10), max(m.listH-vFrame, 1))
+	m.prev.SetSize(max(w-m.sideW-hFrame, 10), max(m.prevH-vFrame, 1))
 }
+
 func (m *Model) Scope() string { return keymap.ScopeQueue }
 func (m *Model) ShortHelp() []key.Binding {
 	return m.deps.Keys.Bindings("queue.add", "queue.delete", "queue.clear", "queue.peek", "queue.watch", "queue.trigger")
@@ -437,19 +491,34 @@ func (m *Model) View() string {
 	if m.watch {
 		watch = "  👁 watch"
 	}
-	sideW := min(24, max(m.w/4, 16))
+
 	if !ui.Wide(m.w) {
 		if m.focus == paneSide {
-			return m.box(m.side.Title(), m.side.View(), true)
+			body := m.box(m.side.Title(), m.side.View(), true)
+			return lipgloss.NewStyle().Width(m.w).Height(m.h).Render(body)
 		}
-		return m.box(m.queue+watch, m.table.View()+"\n"+m.prev.View(), m.focus == paneList)
+		// Table body and preview body were sized in Resize() to together
+		// fit inside ONE box's inner area, so just stack them and let the
+		// single box() wrap the combined content.
+		combined := m.table.View() + "\n" + m.prev.View()
+		body := m.box(m.queue+watch, combined, m.focus == paneList)
+		return lipgloss.NewStyle().Width(m.w).Height(m.h).Render(body)
 	}
+
+	// Reuse the layout computed once in Resize(); never recompute sideW/
+	// listH/prevH here, or they can drift out of sync with what the child
+	// components were actually sized to.
 	left := m.box(m.side.Title(), m.side.View(), m.focus == paneSide)
 	right := lipgloss.JoinVertical(lipgloss.Left,
-		m.box(m.queue+watch, m.table.View(), m.focus == paneList),
-		m.box("Message", m.prev.View(), m.focus == panePrev),
+		lipgloss.NewStyle().Width(m.w-m.sideW).Height(m.listH).
+			Render(m.box(m.queue+watch, m.table.View(), m.focus == paneList)),
+		lipgloss.NewStyle().Width(m.w-m.sideW).Height(m.prevH).
+			Render(m.box("Message", m.prev.View(), m.focus == panePrev)),
 	)
-	return lipgloss.JoinHorizontal(lipgloss.Top, ui.Fit(left, sideW, m.h), ui.Fit(right, m.w-sideW, m.h))
+	return lipgloss.JoinHorizontal(lipgloss.Top,
+		lipgloss.NewStyle().Width(m.sideW).Height(m.h).Render(left),
+		right,
+	)
 }
 
 func (m *Model) box(title, body string, active bool) string {
@@ -458,6 +527,13 @@ func (m *Model) box(title, body string, active bool) string {
 		s = m.deps.Theme.PaneActive
 	}
 	return s.Render(m.deps.Theme.Header.Render(title) + "\n" + body)
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func readFile(path string) (string, error) {

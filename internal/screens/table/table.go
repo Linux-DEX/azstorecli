@@ -33,6 +33,11 @@ type Deps struct {
 	Stack *stack.Stack
 }
 
+const (
+	paneSide = iota
+	paneList
+)
+
 type Model struct {
 	deps      Deps
 	w, h      int
@@ -47,6 +52,11 @@ type Model struct {
 	histIdx   int
 	hidden    map[string]bool
 	detail    string
+
+	// cached layout, computed once in Resize() and reused by View() so the
+	// sizes handed to child components always match the sizes used to
+	// compose the final frame.
+	sideW, detailH int
 }
 
 func New(deps Deps) *Model {
@@ -64,12 +74,63 @@ func New(deps Deps) *Model {
 }
 
 func (m *Model) Init() tea.Cmd { return m.loadTables() }
+
+// frameSize returns how many columns/rows box() adds on top of a child's
+// raw body: the pane style's border+padding, plus one row for the
+// "title\n" header line that box() always prepends. Deriving this from
+// the style itself (instead of hardcoded constants) keeps the layout
+// correct even if the theme's border/padding ever changes.
+func (m *Model) frameSize() (h, v int) {
+	h = m.deps.Theme.Pane.GetHorizontalFrameSize()
+	v = m.deps.Theme.Pane.GetVerticalFrameSize() + 1 // +1 for the header line
+	return
+}
+
+func clamp(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 func (m *Model) Resize(w, h int) {
 	m.w, m.h = w, h
-	sideW := min(22, max(m.w/5, 14))
-	m.side.SetSize(sideW-2, m.h-4)
-	m.table.SetSize(max(m.w-sideW-2, 10), max(m.h-8, 4))
+	if w <= 0 || h <= 0 {
+		return
+	}
+	hFrame, vFrame := m.frameSize()
+
+	m.sideW = clamp(w/5, 14, 28)
+	m.side.SetSize(max(m.sideW-hFrame, 1), max(h-vFrame, 1))
+
+	// The right-hand box stacks THREE things inside one border: the
+	// "Query …" header line, the table body, and the detail block below
+	// it. All three must fit inside (h - vFrame), so we split that budget
+	// explicitly instead of giving table.View() the whole height and then
+	// silently overflowing the box with the query line + detail on top.
+	const queryLineRows = 1
+	m.detailH = clamp(h/4, 3, 8)
+
+	rightW := w - hFrame
+	if ui.Wide(w) {
+		rightW = w - m.sideW - hFrame
+	}
+	rightInnerH := max(h-vFrame, 1)
+	tableRows := clamp(rightInnerH-queryLineRows-m.detailH, 1, rightInnerH-queryLineRows-1)
+
+	m.table.SetSize(max(rightW, 10), tableRows)
 }
+
 func (m *Model) Scope() string { return keymap.ScopeTable }
 func (m *Model) ShortHelp() []key.Binding {
 	return m.deps.Keys.Bindings("table.filter", "table.new", "table.edit", "table.delete", "table.export")
@@ -136,21 +197,23 @@ func (m *Model) handleKey(k tea.KeyMsg) tea.Cmd {
 	km := m.deps.Keys
 	if km.Matches(k, "app.next_pane") || km.Matches(k, "app.prev_pane") {
 		m.focus = 1 - m.focus
-		m.side.Focused = m.focus == 0
-		m.table.Focused = m.focus == 1
+		m.sync()
 		return nil
 	}
 	if n := ui.ResolveNav(km, k); n != ui.NavNone {
-		if m.focus == 0 {
+		switch m.focus {
+		case paneSide:
 			m.side.Move(n)
 			if it, ok := m.side.Current(); ok && it.Name != m.name {
 				m.name, m.history, m.histIdx = it.Name, nil, 0
 				return m.query(m.filter.Value())
 			}
 			return nil
+		case paneList:
+			m.table.Move(n)
+			m.detailCurrent()
+			return nil
 		}
-		m.table.Move(n)
-		m.detailCurrent()
 		return nil
 	}
 	switch {
@@ -211,6 +274,11 @@ func (m *Model) handleKey(k tea.KeyMsg) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+func (m *Model) sync() {
+	m.side.Focused = m.focus == paneSide
+	m.table.Focused = m.focus == paneList
 }
 
 func (m *Model) ask(action, title, prompt string) tea.Cmd {
@@ -453,16 +521,26 @@ func (m *Model) View() string {
 	if m.filtering {
 		header = "Query  " + m.filter.View()
 	}
-	sideW := min(22, max(m.w/5, 14))
-	left := m.box(m.side.Title(), m.side.View(), m.focus == 0)
-	right := m.box(m.name+"  "+m.table.ScrollInfo(), header+"\n"+m.table.View()+"\n"+m.detail, m.focus == 1)
+
+	// Reuse the layout computed once in Resize(); never recompute sideW
+	// here, or it can drift out of sync with what m.side/m.table were
+	// actually sized to.
 	if !ui.Wide(m.w) {
-		if m.focus == 0 {
-			return ui.Fit(left, m.w, m.h)
+		if m.focus == paneSide {
+			body := m.box(m.side.Title(), m.side.View(), true)
+			return lipgloss.NewStyle().Width(m.w).Height(m.h).Render(body)
 		}
-		return ui.Fit(right, m.w, m.h)
+		body := m.box(m.name+"  "+m.table.ScrollInfo(), header+"\n"+m.table.View()+"\n"+m.detail, true)
+		return lipgloss.NewStyle().Width(m.w).Height(m.h).Render(body)
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, ui.Fit(left, sideW, m.h), ui.Fit(right, m.w-sideW, m.h))
+
+	left := m.box(m.side.Title(), m.side.View(), m.focus == paneSide)
+	right := m.box(m.name+"  "+m.table.ScrollInfo(), header+"\n"+m.table.View()+"\n"+m.detail, m.focus == paneList)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top,
+		lipgloss.NewStyle().Width(m.sideW).Height(m.h).Render(left),
+		lipgloss.NewStyle().Width(m.w-m.sideW).Height(m.h).Render(right),
+	)
 }
 
 func (m *Model) box(title, body string, active bool) string {

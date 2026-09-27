@@ -55,6 +55,11 @@ type Model struct {
 	marker    string
 	filtering bool
 	sortCol   int
+
+	// cached layout, computed once in layout() and reused by View() so the
+	// sizes handed to child components always match the sizes used to
+	// compose the final frame.
+	sideW, listH, prevH int
 }
 
 // New builds the explorer.
@@ -85,18 +90,53 @@ func (m *Model) Resize(w, h int) {
 	m.layout()
 }
 
+// frameSize returns how many columns/rows pane() adds on top of a child
+// component's raw body: the border+padding cost of the pane style, plus
+// one row for the "title\n" header line that pane() prepends. Deriving
+// this from the style itself (instead of a hardcoded constant) keeps the
+// layout correct even if the theme's border/padding changes.
+func (m *Model) frameSize() (h, v int) {
+	h = m.deps.Theme.Pane.GetHorizontalFrameSize()
+	v = m.deps.Theme.Pane.GetVerticalFrameSize() + 1 // +1 for the header line
+	return
+}
+
+func clamp(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 func (m *Model) layout() {
+	if m.w <= 0 || m.h <= 0 {
+		return
+	}
+	hFrame, vFrame := m.frameSize()
+
 	if ui.Wide(m.w) {
-		sideW := min(28, m.w/4)
-		prevH := min(12, m.h/3)
-		listH := m.h - prevH
-		m.side.SetSize(sideW-2, m.h-2)
-		m.table.SetSize(m.w-sideW-2, listH-2)
-		m.prev.SetSize(m.w-sideW-2, prevH-2)
+		m.sideW = clamp(m.w/4, 14, 28)
+		m.prevH = clamp(m.h/3, 4, 10)
+		m.listH = m.h - m.prevH
+
+		m.side.SetSize(max(1, m.sideW-hFrame), max(1, m.h-vFrame))
+		m.table.SetSize(max(1, m.w-m.sideW-hFrame), max(1, m.listH-vFrame))
+		m.prev.SetSize(max(1, m.w-m.sideW-hFrame), max(1, m.prevH-vFrame))
 	} else {
-		m.side.SetSize(m.w-2, m.h-2)
-		m.table.SetSize(m.w-2, m.h-2)
-		m.prev.SetSize(m.w-2, m.h-2)
+		m.sideW, m.listH, m.prevH = 0, 0, 0
+		m.side.SetSize(max(1, m.w-hFrame), max(1, m.h-vFrame))
+		m.table.SetSize(max(1, m.w-hFrame), max(1, m.h-vFrame))
+		m.prev.SetSize(max(1, m.w-hFrame), max(1, m.h-vFrame))
 	}
 }
 
@@ -775,20 +815,27 @@ func (m *Model) View() string {
 		default:
 			body = m.pane(title, m.table.View(), true)
 		}
-		return ui.Fit(body, m.w, m.h)
+		// Compose with lipgloss's own Width/Height instead of ui.Fit: it is
+		// ANSI/border-aware and won't chew through box-drawing characters
+		// the way a naive rune-cropping Fit does on an already-bordered pane.
+		return lipgloss.NewStyle().Width(m.w).Height(m.h).Render(body)
 	}
 
-	sideW := min(28, m.w/4)
-	prevH := min(12, m.h/3)
-	listH := m.h - prevH
+	// Reuse the layout computed once in layout(); never recompute sideW/
+	// listH/prevH here, or they can drift out of sync with what the child
+	// components were actually sized to.
 	left := m.pane(m.side.Title(), m.side.View(), m.focus == paneSide)
 	rightTop := m.pane(title+"  "+m.table.ScrollInfo(), m.table.View(), m.focus == paneList)
 	rightBot := m.pane("Preview: "+m.prev.Name()+"  "+m.prev.Footer(""), m.prev.View(), m.focus == panePrev)
+
 	right := lipgloss.JoinVertical(lipgloss.Left,
-		ui.Fit(rightTop, m.w-sideW, listH),
-		ui.Fit(rightBot, m.w-sideW, prevH),
+		lipgloss.NewStyle().Width(m.w-m.sideW).Height(m.listH).Render(rightTop),
+		lipgloss.NewStyle().Width(m.w-m.sideW).Height(m.prevH).Render(rightBot),
 	)
-	return lipgloss.JoinHorizontal(lipgloss.Top, ui.Fit(left, sideW, m.h), right)
+	return lipgloss.JoinHorizontal(lipgloss.Top,
+		lipgloss.NewStyle().Width(m.sideW).Height(m.h).Render(left),
+		right,
+	)
 }
 
 func (m *Model) pane(title, body string, active bool) string {
