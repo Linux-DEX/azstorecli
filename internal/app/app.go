@@ -5,17 +5,15 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Linux-DEX/azstorecli/internal/components/helpbar"
+	"github.com/Linux-DEX/azstorecli/internal/components/helpoverlay"
 	"github.com/Linux-DEX/azstorecli/internal/components/modal"
 	"github.com/Linux-DEX/azstorecli/internal/components/palette"
 	"github.com/Linux-DEX/azstorecli/internal/components/statusbar"
 	"github.com/Linux-DEX/azstorecli/internal/config"
-	"github.com/Linux-DEX/azstorecli/internal/keymap"
 	"github.com/Linux-DEX/azstorecli/internal/msg"
 	"github.com/Linux-DEX/azstorecli/internal/screens/blob"
 	"github.com/Linux-DEX/azstorecli/internal/screens/dashboard"
@@ -36,8 +34,7 @@ type RootModel struct {
 	status   statusbar.Model
 	palette  *palette.Model
 	modal    tea.Model
-	help     help.Model
-	showAll  bool
+	help     *helpoverlay.Model
 	drawer   bool
 	logs     *logs.Model
 	w, h     int
@@ -77,7 +74,7 @@ func New(s *stack.Stack) RootModel {
 		router:  r,
 		status:  st,
 		palette: palette.New(th, keys),
-		help:    help.New(),
+		help:    helpoverlay.New(th, keys),
 		logs:    logs.New(logs.Deps{Theme: th, Keys: keys, Stack: s}),
 	}
 }
@@ -107,7 +104,6 @@ func (m RootModel) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := teaMsg.(type) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = v.Width, v.Height
-		m.help.Width = v.Width
 		m.status.SetSize(v.Width)
 		m.palette.SetWidth(v.Width)
 		bodyH := m.bodyHeight()
@@ -120,6 +116,13 @@ func (m RootModel) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 			updated, cmd := m.modal.Update(v)
 			m.modal = updated
 			return m, cmd
+		}
+		if m.help.Opened() {
+			if m.deps.Stack.Keys.Matches(v, "app.force_quit") {
+				return m, m.shutdown()
+			}
+			m.help.Update(v)
+			return m, nil
 		}
 		if m.palette.Focused() {
 			updated, cmd := m.palette.Update(v)
@@ -241,8 +244,7 @@ func (m *RootModel) handleGlobal(k tea.KeyMsg) (tea.Cmd, bool) {
 			return msg.OpenModal{Kind: msg.ModalConfirm, Title: "Quit azstore?", Action: "quit"}
 		}, true
 	case km.Matches(k, "app.help"):
-		m.showAll = !m.showAll
-		m.help.ShowAll = m.showAll
+		m.help.Toggle()
 		return nil, true
 	case km.Matches(k, "app.palette"):
 		m.palette.Open(m.router.scope())
@@ -322,7 +324,8 @@ func (m *RootModel) dispatchAction(id string) tea.Cmd {
 			return msg.OpenModal{Kind: msg.ModalInput, Title: "Snapshot name", Prompt: "name", Action: "save"}
 		}
 	case "app.help":
-		m.showAll = !m.showAll
+		m.help.Toggle()
+		return nil
 	default:
 		return func() tea.Msg { return msg.Action{ID: id} }
 	}
@@ -440,17 +443,16 @@ func (m RootModel) View() string {
 	if m.drawer {
 		chrome = append(chrome, m.logs.View())
 	}
-	if m.showAll {
-		chrome = append(chrome, m.help.View(fullHelp{km: m.deps.Stack.Keys, scope: m.router.scope()}))
-	} else {
-		chrome = append(chrome, helpbar.Render(m.deps.Stack.Theme, m.w, m.router.currentID(), m.router.shortHelp()))
-	}
+	chrome = append(chrome, helpbar.Render(m.deps.Stack.Theme, m.w, m.router.currentID(), m.router.shortHelp()))
 	frame := lipgloss.JoinVertical(lipgloss.Left, chrome...)
 	if m.modal != nil {
 		return modal.Place(m.modal.View(), m.w, m.h, m.deps.Stack.Theme)
 	}
 	if m.palette.Focused() {
 		return lipgloss.Place(m.w, m.h, lipgloss.Center, lipgloss.Top, m.palette.View())
+	}
+	if m.help.Opened() {
+		return helpoverlay.Place(frame, m.help.View(m.router.scope(), m.w, m.h), m.w, m.h)
 	}
 	return frame
 }
@@ -467,14 +469,4 @@ func listenSupervisor(events <-chan supervisor.Event) tea.Cmd {
 
 func portSummary(cfg config.Config) string {
 	return fmt.Sprintf("blob:%d  f:%d", cfg.Azurite.BlobPort, cfg.Functions.Port)
-}
-
-type fullHelp struct {
-	km    *keymap.KeyMap
-	scope string
-}
-
-func (f fullHelp) ShortHelp() []key.Binding { return nil }
-func (f fullHelp) FullHelp() [][]key.Binding {
-	return f.km.FullHelp(f.scope)
 }

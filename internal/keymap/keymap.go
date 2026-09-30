@@ -128,42 +128,6 @@ func (k *KeyMap) DetectConflicts() error {
 	return nil
 }
 
-// FullHelp groups every binding by scope for the help overlay.
-func (k *KeyMap) FullHelp(scope string) [][]key.Binding {
-	var global, local []key.Binding
-	for _, a := range ActionsFor(scope) {
-		b, ok := k.byAction[a.ID]
-		if !ok || len(b.Keys()) == 0 {
-			continue
-		}
-		if a.Scope == ScopeGlobal {
-			global = append(global, b)
-		} else {
-			local = append(local, b)
-		}
-	}
-	// Two balanced columns read better than one long list in a terminal
-	// that is usually wider than it is tall.
-	out := [][]key.Binding{}
-	if len(local) > 0 {
-		out = append(out, splitColumns(local, 2)...)
-	}
-	return append(out, splitColumns(global, 2)...)
-}
-
-func splitColumns(in []key.Binding, cols int) [][]key.Binding {
-	if len(in) == 0 {
-		return nil
-	}
-	per := (len(in) + cols - 1) / cols
-	var out [][]key.Binding
-	for i := 0; i < len(in); i += per {
-		end := min(i+per, len(in))
-		out = append(out, in[i:end])
-	}
-	return out
-}
-
 // helpKey renders a binding's keys for the help bar, showing at most
 // two so a three-alias binding does not blow out the column.
 func helpKey(keys []string) string {

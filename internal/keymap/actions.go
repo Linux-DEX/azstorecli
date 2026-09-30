@@ -39,7 +39,7 @@ var registry = []Action{
 	{ID: "app.quit", Title: "quit", Desc: "Back one level, or quit from the root", Keys: []string{"q"}},
 	{ID: "app.force_quit", Title: "force quit", Desc: "Quit now, stopping child processes", Keys: []string{"ctrl+c"}},
 	{ID: "app.palette", Title: "command palette", Desc: "Fuzzy-search every action", Keys: []string{":", "ctrl+k"}},
-	{ID: "app.help", Title: "help", Desc: "Toggle the full keybinding overlay", Keys: []string{"?"}},
+	{ID: "app.help", Title: "help", Desc: "Show keybindings in a dialog", Keys: []string{"?"}},
 	{ID: "app.filter", Title: "filter", Desc: "Filter or search the current list", Keys: []string{"/"}},
 	{ID: "app.escape", Title: "cancel", Desc: "Close a modal, clear a filter, pop focus", Keys: []string{"esc"}},
 	{ID: "app.refresh", Title: "refresh", Desc: "Reload the current view", Keys: []string{"ctrl+r", "f5"}},
