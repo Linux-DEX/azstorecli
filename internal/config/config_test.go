@@ -26,6 +26,13 @@ func TestValidateRuntime(t *testing.T) {
 	}
 }
 
+func TestDevAccountKey(t *testing.T) {
+	const azuriteKey = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
+	if DevAccountKey != azuriteKey {
+		t.Fatalf("dev key %q is not Azurite's well-known key; creates get 403 and never show up", DevAccountKey)
+	}
+}
+
 func TestAzuriteConnStrPorts(t *testing.T) {
 	s := AzuriteConnStrPorts(20000, 20001, 20002)
 	if s == AzuriteConnStr {

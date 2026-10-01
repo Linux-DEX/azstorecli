@@ -111,7 +111,9 @@ func Defaults() Config {
 // but no other credential may ever be hardcoded (see the AppSec rule).
 const (
 	DevAccountName = "devstoreaccount1"
-	DevAccountKey  = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq5ZUpgztYyxSGxrJOn3zJdCyMhwHDX0R8Cw2A=="
+	// Azurite's published development key. A different key is rejected
+	// with 403, so a create never lands and the sidebar stays empty.
+	DevAccountKey = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
 )
 
 // AzuriteConnStr is the devstore connection string on the default ports.

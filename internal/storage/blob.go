@@ -66,9 +66,10 @@ func (c *Clients) ListContainers(ctx context.Context) ([]ContainerInfo, error) {
 	}
 
 	var out []ContainerInfo
-	pager := client.NewListContainersPager(&azblob.ListContainersOptions{
-		Include: azblob.ListContainersInclude{Metadata: true},
-	})
+	// Do not ask for metadata. Azurite's include=metadata listing omits
+	// containers that have none, so a container created from the sidebar
+	// never comes back in the next refresh.
+	pager := client.NewListContainersPager(nil)
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {

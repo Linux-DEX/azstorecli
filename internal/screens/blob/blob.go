@@ -3,6 +3,7 @@ package blob
 import (
 	"context"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -51,6 +52,7 @@ type Model struct {
 
 	container string
 	prefix    string
+	reveal    string // container to keep selected after the next listing
 	entries   []storage.BlobEntry
 	marker    string
 	filtering bool
@@ -149,16 +151,16 @@ func (m *Model) ShortHelp() []key.Binding {
 func (m *Model) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := teaMsg.(type) {
 	case containersMsg:
-		items := make([]treepane.Item, 0, len(v))
-		for _, c := range v {
-			items = append(items, treepane.Item{Name: c.Name, Badge: c.Access})
-		}
-		m.side.SetItems(items)
-		if m.container == "" && len(v) > 0 {
-			m.container = v[0].Name
+		if m.applyContainers(v) {
 			return m, m.loadBlobs()
 		}
 		return m, nil
+	case containerMade:
+		m.reveal = string(v)
+		m.container = string(v)
+		m.prefix = ""
+		m.ensureContainer(string(v))
+		return m, m.loadContainers()
 	case blobsMsg:
 		m.entries, m.marker = v.Entries, v.Marker
 		m.fillTable()
@@ -420,6 +422,57 @@ func (m *Model) fillTable() {
 	m.table.SetRows(rows)
 }
 
+// applyContainers replaces the sidebar from a listing. A container that
+// was just created is put back if the listing left it out, and selected
+// so it is on screen. It reports whether the blob list should reload.
+func (m *Model) applyContainers(list []storage.ContainerInfo) bool {
+	items := make([]treepane.Item, 0, len(list)+1)
+	seen := false
+	for _, c := range list {
+		items = append(items, treepane.Item{Name: c.Name, Badge: c.Access})
+		if c.Name == m.reveal {
+			seen = true
+		}
+	}
+	reveal := m.reveal
+	if reveal != "" && !seen {
+		items = append(items, treepane.Item{Name: reveal, Badge: "private"})
+		sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
+	}
+	m.side.SetItems(items)
+	if reveal != "" {
+		m.reveal = ""
+		m.container = reveal
+		m.prefix = ""
+		m.side.Select(reveal)
+		return true
+	}
+	if m.container == "" && len(items) > 0 {
+		m.container = items[0].Name
+		m.side.Select(m.container)
+		return true
+	}
+	if m.container != "" {
+		m.side.Select(m.container)
+	}
+	return false
+}
+
+// ensureContainer inserts name into the sidebar if it is not already there.
+func (m *Model) ensureContainer(name string) {
+	for _, it := range m.side.Items() {
+		if it.Name == name {
+			m.side.Select(name)
+			return
+		}
+	}
+	items := append([]treepane.Item{}, m.side.Items()...)
+	items = append(items, treepane.Item{Name: name, Badge: "private"})
+	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
+	m.side.SetItems(items)
+	m.side.Select(name)
+}
+
 func (m *Model) loadContainers() tea.Cmd {
 	c := m.deps.Stack.Clients
 	return func() tea.Msg {
@@ -528,13 +581,17 @@ func (m *Model) onModal(r msg.ModalResult) tea.Cmd {
 	container := m.container
 	switch r.Action {
 	case "new_container":
+		name := strings.ToLower(strings.TrimSpace(r.Value))
+		if name == "" {
+			return func() tea.Msg { return msg.Status{Text: "container name required", Warning: true} }
+		}
 		return func() tea.Msg {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			if err := c.CreateContainer(ctx, r.Value, ""); err != nil {
+			if err := c.CreateContainer(ctx, name, ""); err != nil {
 				return ui.Fail(err)
 			}
-			return msg.Refresh{}
+			return containerMade(name)
 		}
 	case "new_dir":
 		m.prefix = storage.JoinPrefix(m.prefix, strings.TrimSuffix(r.Value, "/")+"/")
@@ -855,6 +912,10 @@ func splitDest(s, defaultContainer string) (string, string) {
 }
 
 type containersMsg []storage.ContainerInfo
+
+// containerMade is a container that was just created and must appear in
+// the sidebar even when the following list call leaves it out.
+type containerMade string
 type blobsMsg storage.BlobPage
 type previewMsg struct {
 	name  string
