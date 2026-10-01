@@ -46,6 +46,7 @@ type Model struct {
 	query    map[string]string
 	last     funcs.Response
 	watching bool
+	zoom     bool
 
 	// cached layout, computed once in Resize() and reused by View() so the
 	// sizes handed to child components always match the sizes used to
@@ -84,6 +85,10 @@ func (m *Model) Resize(w, h int) {
 		return
 	}
 	hFrame, vFrame := m.frameSize()
+	if m.zoom {
+		m.prev.SetSize(max(w-hFrame, 1), max(h-vFrame, 1))
+		return
+	}
 
 	if !ui.Wide(w) {
 		// Narrow layout: left and right boxes are stacked full-width, each
@@ -133,6 +138,19 @@ func (m *Model) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *Model) handleKey(k tea.KeyMsg) tea.Cmd {
 	km := m.deps.Keys
+	if km.Matches(k, "func.preview_zoom") || (m.zoom && km.Matches(k, "app.escape")) {
+		m.setPreviewZoom(!m.zoom)
+		return nil
+	}
+	if m.zoom {
+		if n := ui.ResolveNav(km, k); n != ui.NavNone {
+			m.prev.Scroll(n)
+			return nil
+		}
+		if km.Matches(k, "app.next_pane") || km.Matches(k, "app.prev_pane") {
+			return nil
+		}
+	}
 
 	if km.Matches(k, "app.next_pane") {
 		m.focus = 1 - m.focus
@@ -244,6 +262,17 @@ func (m *Model) handleKey(k tea.KeyMsg) tea.Cmd {
 
 func (m *Model) sync() {
 	m.table.Focused = m.focus == paneList
+}
+
+func (m *Model) setPreviewZoom(on bool) {
+	m.zoom = on
+	if on {
+		m.focus = panePrev
+	} else if m.focus == panePrev {
+		m.focus = paneList
+	}
+	m.sync()
+	m.Resize(m.w, m.h)
 }
 
 func (m *Model) fill() {
@@ -462,6 +491,11 @@ func (m *Model) toggle() tea.Cmd {
 func (m *Model) View() string {
 	if m.w <= 0 {
 		return ""
+	}
+
+	if m.zoom {
+		body := m.box(funcTitle(m), m.prev.View(), true)
+		return lipgloss.NewStyle().Width(m.w).Height(m.h).Render(body)
 	}
 
 	left := m.box("Functions", m.table.View(), m.focus == paneList)

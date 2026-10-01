@@ -104,6 +104,7 @@ var registry = []Action{
 	{ID: "blob.select_all", Title: "select all", Desc: "Select every row in view", Scope: ScopeBlob, Keys: []string{"ctrl+a"}},
 	{ID: "blob.up_level", Title: "up one prefix", Desc: "Leave the current virtual directory", Scope: ScopeBlob, Keys: []string{"backspace"}},
 	{ID: "blob.load_full", Title: "load full preview", Desc: "Fetch the whole blob into the preview", Scope: ScopeBlob, Keys: []string{"F"}},
+	{ID: "blob.preview_zoom", Title: "preview fullscreen", Desc: "Expand the preview to fill the screen", Scope: ScopeBlob, Keys: []string{"z"}},
 
 	// ---- queue ------------------------------------------------------
 	{ID: "queue.add", Title: "add message", Desc: "Compose a message in $EDITOR", Scope: ScopeQueue, Keys: []string{"a"}},
@@ -118,6 +119,7 @@ var registry = []Action{
 	{ID: "queue.new", Title: "new queue", Desc: "Create a queue", Scope: ScopeQueue, Keys: []string{"n"}},
 	{ID: "queue.properties", Title: "queue properties", Desc: "Metadata and approximate count", Scope: ScopeQueue, Keys: []string{"p"}},
 	{ID: "queue.trigger", Title: "trigger function", Desc: "Run the bound function against this message", Scope: ScopeQueue, Keys: []string{"t"}},
+	{ID: "queue.preview_zoom", Title: "preview fullscreen", Desc: "Expand the preview to fill the screen", Scope: ScopeQueue, Keys: []string{"z"}},
 
 	// ---- table ------------------------------------------------------
 	{ID: "table.filter", Title: "edit filter", Desc: "Edit the OData filter", Scope: ScopeTable, Keys: []string{"f"}},
@@ -149,6 +151,7 @@ var registry = []Action{
 	{ID: "func.replay", Title: "replay request", Desc: "Load a saved request", Scope: ScopeFunctions, Keys: []string{"R"}},
 	{ID: "func.trigger_target", Title: "go to trigger target", Desc: "Jump to the bound queue, blob, or table", Scope: ScopeFunctions, Keys: []string{"t"}},
 	{ID: "func.toggle_enabled", Title: "enable/disable", Desc: "Patch the function's disabled flag", Scope: ScopeFunctions, Keys: []string{"d"}},
+	{ID: "func.preview_zoom", Title: "preview fullscreen", Desc: "Expand the preview to fill the screen", Scope: ScopeFunctions, Keys: []string{"z"}},
 
 	// ---- logs -------------------------------------------------------
 	{ID: "logs.pause", Title: "pause logs", Desc: "Pause or resume auto-scroll", Scope: ScopeLogs, Keys: []string{" "}},

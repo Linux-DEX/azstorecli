@@ -57,6 +57,7 @@ type Model struct {
 	marker    string
 	filtering bool
 	sortCol   int
+	zoom      bool
 
 	// cached layout, computed once in layout() and reused by View() so the
 	// sizes handed to child components always match the sizes used to
@@ -125,6 +126,10 @@ func (m *Model) layout() {
 		return
 	}
 	hFrame, vFrame := m.frameSize()
+	if m.zoom {
+		m.prev.SetSize(max(1, m.w-hFrame), max(1, m.h-vFrame))
+		return
+	}
 
 	if ui.Wide(m.w) {
 		m.sideW = ui.SideWidth(m.w)
@@ -204,6 +209,19 @@ func (m *Model) handleFilter(k tea.KeyMsg) tea.Cmd {
 
 func (m *Model) handleKey(k tea.KeyMsg) tea.Cmd {
 	km := m.deps.Keys
+	if km.Matches(k, "blob.preview_zoom") || (m.zoom && km.Matches(k, "app.escape")) {
+		m.setPreviewZoom(!m.zoom)
+		return nil
+	}
+	if m.zoom {
+		if n := ui.ResolveNav(km, k); n != ui.NavNone {
+			m.prev.Scroll(n)
+			return nil
+		}
+		if km.Matches(k, "app.next_pane") || km.Matches(k, "app.prev_pane") {
+			return nil
+		}
+	}
 	if km.Matches(k, "app.next_pane") {
 		m.focus = (m.focus + 1) % 3
 		m.syncFocus()
@@ -357,6 +375,17 @@ func (m *Model) navNarrow(n ui.Nav) tea.Cmd {
 func (m *Model) syncFocus() {
 	m.side.Focused = m.focus == paneSide
 	m.table.Focused = m.focus == paneList
+}
+
+func (m *Model) setPreviewZoom(on bool) {
+	m.zoom = on
+	if on {
+		m.focus = panePrev
+	} else if m.focus == panePrev {
+		m.focus = paneList
+	}
+	m.syncFocus()
+	m.layout()
 }
 
 func (m *Model) open() tea.Cmd {
@@ -860,6 +889,10 @@ func (m *Model) View() string {
 	}
 	if title == "" {
 		title = "blobs"
+	}
+	if m.zoom {
+		body := m.pane("Preview: "+m.prev.Name()+"  "+m.prev.Footer(""), m.prev.View(), true)
+		return lipgloss.NewStyle().Width(m.w).Height(m.h).Render(body)
 	}
 
 	if !ui.Wide(m.w) {
