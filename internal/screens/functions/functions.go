@@ -78,16 +78,6 @@ func (m *Model) frameSize() (h, v int) {
 	return
 }
 
-func clamp(v, lo, hi int) int {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
-}
-
 func (m *Model) Resize(w, h int) {
 	m.w, m.h = w, h
 	if w <= 0 || h <= 0 {
@@ -108,7 +98,7 @@ func (m *Model) Resize(w, h int) {
 		return
 	}
 
-	m.leftW = clamp(w/3, 20, 36)
+	m.leftW = ui.SideWidth(w)
 	m.table.SetSize(max(m.leftW-hFrame, 1), max(h-vFrame, 1))
 	m.prev.SetSize(max(w-m.leftW-hFrame, 10), max(h-vFrame, 1))
 }

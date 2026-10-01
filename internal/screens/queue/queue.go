@@ -97,7 +97,7 @@ func (m *Model) Resize(w, h int) {
 	}
 	hFrame, vFrame := m.frameSize()
 
-	m.sideW = clamp(w/4, 16, 28)
+	m.sideW = ui.SideWidth(w)
 
 	if !ui.Wide(w) {
 		// Narrow layout: side pane is full-size on its own screen; the list

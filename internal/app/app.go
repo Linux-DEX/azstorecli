@@ -142,9 +142,6 @@ func (m RootModel) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 		if v.Action == "onboard" && v.OK {
 			return m, m.doOnboard()
 		}
-		if v.Action == "quit" && v.OK {
-			return m, m.shutdown()
-		}
 		if v.Action == "save" && v.OK {
 			return m, m.quickSnapshot(v.Value)
 		}
@@ -240,9 +237,7 @@ func (m *RootModel) handleGlobal(k tea.KeyMsg) (tea.Cmd, bool) {
 			m.resizeBody()
 			return nil, true
 		}
-		return func() tea.Msg {
-			return msg.OpenModal{Kind: msg.ModalConfirm, Title: "Quit azstore?", Action: "quit"}
-		}, true
+		return m.shutdown(), true
 	case km.Matches(k, "app.help"):
 		m.help.Toggle()
 		return nil, true
@@ -323,6 +318,12 @@ func (m *RootModel) dispatchAction(id string) tea.Cmd {
 		return func() tea.Msg {
 			return msg.OpenModal{Kind: msg.ModalInput, Title: "Snapshot name", Prompt: "name", Action: "save"}
 		}
+	case "app.quit":
+		if m.router.back() {
+			m.resizeBody()
+			return nil
+		}
+		return m.shutdown()
 	case "app.help":
 		m.help.Toggle()
 		return nil

@@ -36,7 +36,7 @@ type Action struct {
 // `azstore keys list` at once.
 var registry = []Action{
 	// ---- global -----------------------------------------------------
-	{ID: "app.quit", Title: "quit", Desc: "Back one level, or quit from the root", Keys: []string{"q"}},
+	{ID: "app.quit", Title: "quit", Desc: "Back one level, or quit", Keys: []string{"q"}},
 	{ID: "app.force_quit", Title: "force quit", Desc: "Quit now, stopping child processes", Keys: []string{"ctrl+c"}},
 	{ID: "app.palette", Title: "command palette", Desc: "Fuzzy-search every action", Keys: []string{":", "ctrl+k"}},
 	{ID: "app.help", Title: "help", Desc: "Show keybindings in a dialog", Keys: []string{"?"}},

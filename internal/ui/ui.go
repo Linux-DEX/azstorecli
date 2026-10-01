@@ -44,6 +44,19 @@ const MinWideColumns = 100
 // Wide reports whether there is room for a side-by-side layout.
 func Wide(width int) bool { return width >= MinWideColumns }
 
+// SideWidth is the left pane width shared by every split screen.
+// It matches the functions list: a third of the terminal, between 20 and 36.
+func SideWidth(width int) int {
+	w := width / 3
+	if w < 20 {
+		return 20
+	}
+	if w > 36 {
+		return 36
+	}
+	return w
+}
+
 // Truncate cuts s to w display cells, appending an ellipsis when it had
 // to cut. Width is measured in cells, not bytes or runes, so CJK and
 // emoji do not overflow the column.

@@ -125,7 +125,7 @@ func (m *Model) layout() {
 	hFrame, vFrame := m.frameSize()
 
 	if ui.Wide(m.w) {
-		m.sideW = clamp(m.w/4, 14, 28)
+		m.sideW = ui.SideWidth(m.w)
 		m.prevH = clamp(m.h/3, 4, 10)
 		m.listH = m.h - m.prevH
 

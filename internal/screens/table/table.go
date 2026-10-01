@@ -110,7 +110,7 @@ func (m *Model) Resize(w, h int) {
 	}
 	hFrame, vFrame := m.frameSize()
 
-	m.sideW = clamp(w/5, 14, 28)
+	m.sideW = ui.SideWidth(w)
 	m.side.SetSize(max(m.sideW-hFrame, 1), max(h-vFrame, 1))
 
 	// The right-hand box stacks THREE things inside one border: the
@@ -548,7 +548,20 @@ func (m *Model) box(title, body string, active bool) string {
 	if active {
 		s = m.deps.Theme.PaneActive
 	}
-	return s.Render(m.deps.Theme.Header.Render(title) + "\n" + body)
+	// Height is the inside of the border. Stretching it keeps the pane
+	// full height when the detail block is shorter than the space reserved
+	// for it; clipping keeps a long detail from pushing the border off.
+	contentH := max(m.h-s.GetVerticalFrameSize(), 1)
+	text := clipHeight(m.deps.Theme.Header.Render(title)+"\n"+body, contentH)
+	return s.Height(contentH).Render(text)
+}
+
+func clipHeight(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	return strings.Join(lines, "\n")
 }
 
 func exportEntities(path string, page storage.EntityPage) error {
