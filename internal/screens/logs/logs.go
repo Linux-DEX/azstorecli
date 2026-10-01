@@ -53,7 +53,20 @@ func New(deps Deps) *Model {
 func (m *Model) Init() tea.Cmd { return m.reload() }
 func (m *Model) Resize(w, h int) {
 	m.w, m.h = w, h
-	m.vp.Width, m.vp.Height = w, max(h-3, 1)
+	m.syncViewport()
+}
+
+// chromeLines is the header, plus the filter row when it is on screen.
+func (m *Model) chromeLines() int {
+	if m.filtering || m.filter.Value() != "" {
+		return 2
+	}
+	return 1
+}
+
+func (m *Model) syncViewport() {
+	m.vp.Width = m.w
+	m.vp.Height = max(m.h-m.chromeLines(), 1)
 }
 func (m *Model) Scope() string { return keymap.ScopeLogs }
 func (m *Model) ShortHelp() []key.Binding {
@@ -230,6 +243,10 @@ func (m *Model) save() tea.Cmd {
 }
 
 func (m *Model) View() string {
+	if m.h <= 0 {
+		return ""
+	}
+	m.syncViewport()
 	src := "all"
 	if m.source != "" {
 		src = m.source
@@ -243,7 +260,20 @@ func (m *Model) View() string {
 	if m.filtering || m.filter.Value() != "" {
 		foot = "\nfilter: " + m.filter.View()
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, head, m.vp.View()+foot)
+	// The body must be exactly m.h lines. A short view lets the tab bar
+	// float up when this screen is focused.
+	return fillHeight(lipgloss.JoinVertical(lipgloss.Left, head, m.vp.View()+foot), m.h)
+}
+
+func fillHeight(s string, h int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) > h {
+		lines = lines[:h]
+	}
+	for len(lines) < h {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines, "\n")
 }
 
 func matchLine(l supervisor.LogLine, expr string) bool {
