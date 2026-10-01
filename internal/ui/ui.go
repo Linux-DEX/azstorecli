@@ -27,7 +27,7 @@ type Screen interface {
 
 	// Resize lays the screen out for a new terminal size.
 	Resize(width, height int)
-	// ShortHelp is the contextual key list for the bottom bar.
+	// ShortHelp is this screen's contextual key list.
 	ShortHelp() []key.Binding
 	// Scope is the keymap scope this screen's actions live in.
 	Scope() string
@@ -64,7 +64,9 @@ func Truncate(s string, w int) string {
 	if w <= 0 {
 		return ""
 	}
-	if runewidth.StringWidth(s) <= w {
+	// lipgloss.Width ignores ANSI, so a selected row's color codes are not
+	// counted as part of the name and then cropped away.
+	if lipgloss.Width(s) <= w {
 		return s
 	}
 	if w == 1 {
@@ -79,13 +81,13 @@ func TruncateLeft(s string, w int) string {
 	if w <= 0 {
 		return ""
 	}
-	if runewidth.StringWidth(s) <= w {
+	if lipgloss.Width(s) <= w {
 		return s
 	}
 	runes := []rune(s)
 	for i := range runes {
 		candidate := string(runes[i:])
-		if runewidth.StringWidth(candidate)+1 <= w {
+		if lipgloss.Width(candidate)+1 <= w {
 			return "…" + candidate
 		}
 	}
@@ -95,7 +97,7 @@ func TruncateLeft(s string, w int) string {
 // Pad renders s in exactly w cells, truncating or space-padding.
 func Pad(s string, w int) string {
 	s = Truncate(s, w)
-	if diff := w - runewidth.StringWidth(s); diff > 0 {
+	if diff := w - lipgloss.Width(s); diff > 0 {
 		return s + strings.Repeat(" ", diff)
 	}
 	return s
@@ -105,7 +107,7 @@ func Pad(s string, w int) string {
 // only comparable at a glance when their digits line up.
 func PadLeft(s string, w int) string {
 	s = Truncate(s, w)
-	if diff := w - runewidth.StringWidth(s); diff > 0 {
+	if diff := w - lipgloss.Width(s); diff > 0 {
 		return strings.Repeat(" ", diff) + s
 	}
 	return s

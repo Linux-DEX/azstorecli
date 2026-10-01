@@ -1,7 +1,6 @@
 package app
 
 import (
-	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Linux-DEX/azstorecli/internal/msg"
@@ -69,13 +68,6 @@ func (r *router) resizeAll(w, h int) {
 	}
 }
 
-func (r *router) shortHelp() []key.Binding {
-	if s, ok := r.current().(ui.Screen); ok {
-		return s.ShortHelp()
-	}
-	return nil
-}
-
 func (r *router) scope() string {
 	if s, ok := r.current().(ui.Screen); ok {
 		return s.Scope()
@@ -83,13 +75,47 @@ func (r *router) scope() string {
 	return ""
 }
 
+// boundMsg is a result from a screen that is not necessarily focused.
+// Init loads every screen at startup; without this, a container or queue
+// listing would be delivered to the dashboard and dropped.
+type boundMsg struct {
+	id  msg.ScreenID
+	msg tea.Msg
+}
+
+func bind(id msg.ScreenID, cmd tea.Cmd) tea.Cmd {
+	if cmd == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		inner := cmd()
+		if inner == nil {
+			return nil
+		}
+		return boundMsg{id: id, msg: inner}
+	}
+}
+
+func (r *router) deliver(b boundMsg) tea.Cmd {
+	model, ok := r.screens[b.id]
+	if !ok || b.msg == nil {
+		return nil
+	}
+	updated, cmd := model.Update(b.msg)
+	r.screens[b.id] = updated
+	// ponytail: a tea.Batch returned here is not expanded, because bind
+	// runs the Cmd itself. Screen inits return a single Cmd.
+	return bind(b.id, cmd)
+}
+
 func (r *router) initAll() tea.Cmd {
 	var cmds []tea.Cmd
 	for id, model := range r.screens {
-		if c := model.Init(); c != nil {
-			cmds = append(cmds, c)
-		}
+		cmd := model.Init()
 		r.screens[id] = model
+		if cmd != nil {
+			cmds = append(cmds, bind(id, cmd))
+		}
 	}
 	return tea.Batch(cmds...)
 }

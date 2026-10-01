@@ -151,9 +151,7 @@ func (m RootModel) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.dispatchAction(v.ID)
 
 	case msg.SwitchScreen:
-		m.router.focus(v.Target)
-		m.resizeBody()
-		return m, nil
+		return m, m.show(v.Target)
 
 	case msg.FocusLogs:
 		m.router.focus(msg.ScreenLogs)
@@ -161,9 +159,8 @@ func (m RootModel) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.router.updateCurrent(v)
 
 	case msg.FocusQueue:
-		m.router.focus(msg.ScreenQueue)
-		m.resizeBody()
-		return m, m.router.updateCurrent(v)
+		cmd := m.show(msg.ScreenQueue)
+		return m, tea.Batch(cmd, m.router.updateCurrent(v))
 
 	case msg.FocusBlob:
 		m.router.focus(msg.ScreenBlob)
@@ -177,7 +174,21 @@ func (m RootModel) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case msg.ServiceState:
 		m.status.SetService(v.Name, v.State, v.PID)
-		return m, tea.Batch(m.router.updateCurrent(v), listenSupervisor(m.deps.Stack.Sup.Events()))
+		cmds := []tea.Cmd{m.router.updateCurrent(v), listenSupervisor(m.deps.Stack.Sup.Events())}
+		// The startup listing often runs before Azurite is listening.
+		// Reload once it is healthy so containers and queues from the
+		// last session are on screen without a manual refresh.
+		if v.Name == "azurite" && v.State == supervisor.StateHealthy {
+			cmds = append(cmds, m.broadcast(msg.Refresh{}))
+		}
+		return m, tea.Batch(cmds...)
+
+	case boundMsg:
+		switch v.msg.(type) {
+		case msg.Error, msg.Status, msg.OpenModal:
+			return m.Update(v.msg)
+		}
+		return m, m.router.deliver(v)
 
 	case msg.Log:
 		var cmds []tea.Cmd
@@ -269,9 +280,7 @@ func (m *RootModel) handleGlobal(k tea.KeyMsg) (tea.Cmd, bool) {
 		m.resizeBody()
 		return nil, true
 	case km.Matches(k, "screen.queue"):
-		m.router.focus(msg.ScreenQueue)
-		m.resizeBody()
-		return nil, true
+		return m.show(msg.ScreenQueue), true
 	case km.Matches(k, "screen.table"):
 		m.router.focus(msg.ScreenTable)
 		m.resizeBody()
@@ -303,7 +312,7 @@ func (m *RootModel) dispatchAction(id string) tea.Cmd {
 	case "screen.blob":
 		m.router.focus(msg.ScreenBlob)
 	case "screen.queue":
-		m.router.focus(msg.ScreenQueue)
+		return m.show(msg.ScreenQueue)
 	case "screen.table":
 		m.router.focus(msg.ScreenTable)
 	case "screen.functions":
@@ -340,7 +349,7 @@ func (m *RootModel) broadcast(v tea.Msg) tea.Cmd {
 		updated, cmd := model.Update(v)
 		m.router.screens[id] = updated
 		if cmd != nil {
-			cmds = append(cmds, cmd)
+			cmds = append(cmds, bind(id, cmd))
 		}
 	}
 	return tea.Batch(cmds...)
@@ -415,6 +424,18 @@ func (m *RootModel) shutdown() tea.Cmd {
 	}
 }
 
+// show focuses a tab. The queue list is loaded again on open: the startup
+// fetch often finishes before Azurite is listening, and that empty result
+// would otherwise stay on screen.
+func (m *RootModel) show(id msg.ScreenID) tea.Cmd {
+	m.router.focus(id)
+	m.resizeBody()
+	if id != msg.ScreenQueue {
+		return nil
+	}
+	return m.router.deliver(boundMsg{id: id, msg: msg.Refresh{}})
+}
+
 func (m *RootModel) resizeBody() {
 	if m.w > 0 {
 		m.router.resizeAll(m.w, m.bodyHeight())
@@ -444,7 +465,7 @@ func (m RootModel) View() string {
 	if m.drawer {
 		chrome = append(chrome, m.logs.View())
 	}
-	chrome = append(chrome, helpbar.Render(m.deps.Stack.Theme, m.w, m.router.currentID(), m.router.shortHelp()))
+	chrome = append(chrome, helpbar.Render(m.deps.Stack.Theme, m.w, m.router.currentID()))
 	frame := lipgloss.JoinVertical(lipgloss.Left, chrome...)
 	if m.modal != nil {
 		return modal.Place(m.modal.View(), m.w, m.h, m.deps.Stack.Theme)

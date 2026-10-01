@@ -50,9 +50,9 @@ func (c *Clients) ListQueues(ctx context.Context) ([]QueueInfo, error) {
 	}
 
 	var out []QueueInfo
-	pager := svc.NewListQueuesPager(&azqueue.ListQueuesOptions{
-		Include: azqueue.ListQueuesInclude{Metadata: true},
-	})
+	// Do not ask for metadata. Azurite's include=metadata listing omits
+	// queues that have none, so a queue created earlier never comes back.
+	pager := svc.NewListQueuesPager(nil)
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
