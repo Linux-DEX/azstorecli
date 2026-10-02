@@ -2,11 +2,13 @@ package snapshots
 
 import (
 	"context"
-	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Linux-DEX/azstorecli/internal/azurite"
 	"github.com/Linux-DEX/azstorecli/internal/components/datatable"
@@ -37,8 +39,6 @@ func New(deps Deps) *Model {
 		{Title: "NAME", Flex: true, MinWidth: 14},
 		{Title: "CREATED", Width: 12},
 		{Title: "SIZE", Width: 9, Right: true},
-		{Title: "PROJECT", Width: 16},
-		{Title: "AZURITE", Width: 10},
 	})
 	return &Model{deps: deps, table: tbl}
 }
@@ -46,7 +46,7 @@ func New(deps Deps) *Model {
 func (m *Model) Init() tea.Cmd { return m.reload() }
 func (m *Model) Resize(w, h int) {
 	m.w, m.h = w, h
-	m.table.SetSize(w, max(h-8, 4))
+	m.layout()
 }
 func (m *Model) Scope() string { return keymap.ScopeSnapshots }
 func (m *Model) ShortHelp() []key.Binding {
@@ -118,16 +118,11 @@ func (m *Model) handleKey(k tea.KeyMsg) tea.Cmd {
 }
 
 func (m *Model) fill() {
-	curVer := m.deps.Stack.Version
 	rows := make([]datatable.Row, 0, len(m.list))
 	for _, s := range m.list {
-		name := s.Name
-		if s.VersionSkew(curVer) {
-			name += "  ⚠"
-		}
 		rows = append(rows, datatable.Row{
 			ID:    s.ID,
-			Cells: []string{name, util.RelTime(s.CreatedAt), util.Bytes(s.SizeBytes), s.Project, s.Azurite},
+			Cells: []string{s.Name, util.RelTime(s.CreatedAt), util.Bytes(s.SizeBytes)},
 		})
 	}
 	m.table.SetRows(rows)
@@ -272,23 +267,102 @@ func (m *Model) reload() tea.Cmd {
 }
 
 func (m *Model) View() string {
-	if m.w <= 0 {
+	if m.w <= 0 || m.h <= 0 {
 		return ""
 	}
-	head := fmt.Sprintf("Snapshots  %d saved  ·  %s total", len(m.list), util.Bytes(m.deps.Stack.Snaps.TotalSize()))
-	detail := ""
-	if s, ok := m.current(); ok {
-		detail = fmt.Sprintf("created  %s\nsha256   %s\nnotes    %s",
-			s.CreatedAt.Format(time.RFC3339), s.Checksum, s.Notes)
-		if s.VersionSkew(m.deps.Stack.Version) {
-			detail += "\n⚠ version skew — restore allowed but warned"
-		}
+	leftW, rightW, leftH, rightH := m.split()
+	left := m.pane("Snapshots", m.table.View(), leftW, leftH, true)
+	right := m.pane("Selected", m.detailBody(m.inner(rightW)), rightW, rightH, false)
+	if !ui.Wide(m.w) {
+		return lipgloss.JoinVertical(lipgloss.Left, left, right)
 	}
-	busy := ""
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, right)
+}
+
+func (m *Model) layout() {
+	if m.w <= 0 || m.h <= 0 {
+		return
+	}
+	leftW, _, leftH, _ := m.split()
+	frame := m.deps.Theme.Pane.GetVerticalFrameSize() + 1
+	m.table.SetSize(m.inner(leftW), max(leftH-frame, 1))
+}
+
+func (m *Model) split() (leftW, rightW, leftH, rightH int) {
+	if ui.Wide(m.w) {
+		leftW = m.w * 3 / 5
+		return leftW, m.w - leftW, m.h, m.h
+	}
+	leftH = m.h * 2 / 3
+	if leftH < 1 {
+		leftH = 1
+	}
+	rightH = m.h - leftH
+	if rightH < 1 {
+		rightH = 1
+		leftH = max(m.h-1, 1)
+	}
+	return m.w, m.w, leftH, rightH
+}
+
+func (m *Model) inner(paneW int) int {
+	return max(paneW-m.deps.Theme.Pane.GetHorizontalFrameSize(), 1)
+}
+
+func (m *Model) pane(title, body string, width, height int, active bool) string {
+	style := m.deps.Theme.Pane
+	if active {
+		style = m.deps.Theme.PaneActive
+	}
+	innerW := m.inner(width)
+	innerH := height - style.GetVerticalFrameSize() - 1
+	if innerH < 1 {
+		innerH = 1
+	}
+	block := m.deps.Theme.Header.Render(title) + "\n" + ui.Fit(body, innerW, innerH)
+	return style.Width(innerW).Render(block)
+}
+
+func (m *Model) detailBody(width int) string {
+	lines := []string{
+		m.kv(width, "saved", strconv.Itoa(len(m.list))),
+		m.kv(width, "total", util.Bytes(m.deps.Stack.Snaps.TotalSize())),
+	}
+	s, ok := m.current()
+	if !ok {
+		return strings.Join(lines, "\n")
+	}
+	lines = append(lines, "",
+		m.kv(width, "name", s.Name),
+		m.kv(width, "created", util.RelTime(s.CreatedAt)),
+		m.kv(width, "size", util.Bytes(s.SizeBytes)),
+		m.kv(width, "project", s.Project),
+		m.kv(width, "azurite", s.Azurite),
+	)
+	if s.Checksum != "" {
+		lines = append(lines, m.kv(width, "checksum", s.Checksum))
+	}
+	if s.Notes != "" {
+		lines = append(lines, m.kv(width, "notes", s.Notes))
+	}
+	if len(s.Services) > 0 {
+		lines = append(lines, m.kv(width, "services", strings.Join(s.Services, ", ")))
+	}
+	if s.VersionSkew(m.deps.Stack.Version) {
+		lines = append(lines, m.deps.Theme.StatusWarn.Render("version skew"))
+	}
 	if m.busy != "" {
-		busy = "\n" + m.deps.Theme.StatusWarn.Render(m.busy)
+		lines = append(lines, "", m.deps.Theme.StatusWarn.Render(m.busy))
 	}
-	return ui.Fit(m.deps.Theme.Header.Render(head)+"\n"+m.table.View()+"\n"+detail+busy, m.w, m.h)
+	return strings.Join(lines, "\n")
+}
+
+func (m *Model) kv(width int, label, value string) string {
+	room := width - 12
+	if room < 1 {
+		room = 1
+	}
+	return m.deps.Theme.Muted.Render(ui.Pad(label, 12)) + ui.Truncate(value, room)
 }
 
 type listMsg []azurite.Snapshot

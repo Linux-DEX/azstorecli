@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Linux-DEX/azstorecli/internal/azurite"
 	"github.com/Linux-DEX/azstorecli/internal/config"
@@ -213,86 +214,168 @@ func (m *Model) all(label string, fn func(context.Context, ...string) error) tea
 type doctorMsg []doctor.Check
 
 func (m *Model) View() string {
-	if m.w <= 0 {
+	if m.w <= 0 || m.h <= 0 {
 		return ""
 	}
-	var b strings.Builder
-	b.WriteString(m.themeTitle("Services"))
-	if len(m.statuses) == 0 {
-		b.WriteString(m.deps.Theme.Muted.Render("  no services registered — run `azstore doctor`") + "\n")
+	leftW, rightW, leftH, rightH := m.split()
+	left := m.pane("Services", m.servicesBody(m.inner(leftW)), leftW, leftH, true)
+	right := m.pane("Workspace", m.sideBody(m.inner(rightW)), rightW, rightH, false)
+	if !ui.Wide(m.w) {
+		return lipgloss.JoinVertical(lipgloss.Left, left, right)
 	}
-	for i, st := range m.statuses {
-		b.WriteString(m.renderService(i, st))
-		b.WriteString("\n")
-	}
-
-	b.WriteString(m.themeTitle("Workspace"))
-	b.WriteString(fmt.Sprintf("  %s   %s\n", m.deps.Stack.WS.Dir, util.Bytes(m.ws.SizeBytes)))
-	if last := m.lastSnap(); last != nil {
-		b.WriteString(fmt.Sprintf("  last snapshot  %s  ·  %s  ·  %s\n",
-			last.Name, util.RelTime(last.CreatedAt), util.Bytes(last.SizeBytes)))
-	} else {
-		b.WriteString(m.deps.Theme.Muted.Render("  no snapshots yet") + "\n")
-	}
-
-	if m.busy != "" {
-		b.WriteString("\n" + m.deps.Theme.StatusWarn.Render("  "+m.busy+"…"))
-	}
-
-	if m.detail {
-		b.WriteString("\n" + m.themeTitle("Detail"))
-		if len(m.doctor) > 0 {
-			for _, c := range m.doctor {
-				mark := m.deps.Theme.StatusOK.Render("✓")
-				line := c.Detail
-				if !c.OK {
-					mark = m.deps.Theme.StatusErr.Render("✖")
-					line = c.Error
-				}
-				b.WriteString(fmt.Sprintf("  %s %-18s %s\n", mark, c.Name, line))
-			}
-		} else if st, ok := m.current(); ok {
-			b.WriteString(fmt.Sprintf("  argv     %s\n", strings.Join(st.Argv, " ")))
-			b.WriteString(fmt.Sprintf("  health   %s\n", st.Health))
-			b.WriteString(fmt.Sprintf("  depends  %s\n", strings.Join(st.DependsOn, ", ")))
-			if st.LastError != "" {
-				b.WriteString(m.deps.Theme.StatusErr.Render("  last     "+st.LastError) + "\n")
-			}
-		}
-	}
-
-	return ui.Fit(b.String(), m.w, max(m.h, 1))
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 }
 
-func (m *Model) renderService(i int, st supervisor.Status) string {
-	glyph := theme.StateGlyph(st.State)
-	style := m.deps.Theme.StateColor(st.State)
-	marker := "  "
-	if i == m.cursor {
-		marker = "> "
+// split gives the services pane the wider column. On a narrow terminal
+// the two panes stack, with services taking the top two thirds.
+func (m *Model) split() (leftW, rightW, leftH, rightH int) {
+	if ui.Wide(m.w) {
+		leftW = m.w * 3 / 5
+		return leftW, m.w - leftW, m.h, m.h
 	}
-	head := fmt.Sprintf("%s%s %-16s %-10s", marker, style.Render(glyph), title(st.Name), st.State)
-	if st.PID > 0 {
-		head += fmt.Sprintf("  pid %d  up %s", st.PID, util.Duration(st.Uptime))
+	leftH = m.h * 2 / 3
+	if leftH < 1 {
+		leftH = 1
 	}
-	if i == m.cursor {
-		head = m.deps.Theme.Selected.Render(ui.Pad(stripSimple(head), m.w))
+	rightH = m.h - leftH
+	if rightH < 1 {
+		rightH = 1
+		leftH = max(m.h-1, 1)
 	}
+	return m.w, m.w, leftH, rightH
+}
 
-	var extra string
+func (m *Model) inner(paneW int) int {
+	return max(paneW-m.deps.Theme.Pane.GetHorizontalFrameSize(), 1)
+}
+
+func (m *Model) pane(title, body string, width, height int, active bool) string {
+	style := m.deps.Theme.Pane
+	if active {
+		style = m.deps.Theme.PaneActive
+	}
+	innerW := max(width-style.GetHorizontalFrameSize(), 1)
+	innerH := height - style.GetVerticalFrameSize() - 1 // title line
+	if innerH < 1 {
+		innerH = 1
+	}
+	block := m.deps.Theme.Header.Render(title) + "\n" + ui.Fit(body, innerW, innerH)
+	return style.Width(innerW).Render(block)
+}
+
+func (m *Model) servicesBody(inner int) string {
+	if len(m.statuses) == 0 {
+		return m.deps.Theme.Muted.Render("no services registered")
+	}
+	lines := make([]string, 0, len(m.statuses)*2)
+	for i, st := range m.statuses {
+		lines = append(lines, m.serviceLines(i, st, inner)...)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m *Model) serviceLines(i int, st supervisor.Status, inner int) []string {
+	glyph := theme.StateGlyph(st.State)
+	var tail string
+	if st.PID > 0 {
+		tail = fmt.Sprintf("pid %d   %s", st.PID, util.Duration(st.Uptime))
+	}
+	plain := fmt.Sprintf("  %s  %-16s  %-10s", glyph, title(st.Name), st.State)
+	if tail != "" {
+		plain += "  " + tail
+	}
+	var head string
+	if i == m.cursor {
+		head = m.deps.Theme.Selected.Render(ui.Pad(plain, inner))
+	} else {
+		color := m.deps.Theme.StateColor(st.State)
+		head = fmt.Sprintf("  %s  %-16s  %s",
+			color.Render(glyph), title(st.Name), color.Render(fmt.Sprintf("%-10s", st.State)))
+		if tail != "" {
+			head += "  " + tail
+		}
+	}
+	sub := m.serviceMeta(st)
+	if sub == "" {
+		return []string{head}
+	}
+	return []string{head, m.deps.Theme.Muted.Render("     " + sub)}
+}
+
+func (m *Model) serviceMeta(st supervisor.Status) string {
+	cfg := m.deps.Stack.Cfg
 	switch st.Name {
 	case "azurite":
-		cfg := m.deps.Stack.Cfg
-		extra = fmt.Sprintf("     blob  :%d   queue :%d   table :%d",
+		return fmt.Sprintf("blob %-5d  queue %-5d  table %d",
 			cfg.Azurite.BlobPort, cfg.Azurite.QueuePort, cfg.Azurite.TablePort)
 	case "functions":
-		cfg := m.deps.Stack.Cfg
-		extra = fmt.Sprintf("     runtime  %s        port :%d", cfg.Functions.Runtime, cfg.Functions.Port)
+		return fmt.Sprintf("%-16s  port %d", cfg.Functions.Runtime, cfg.Functions.Port)
+	default:
+		return ""
 	}
-	if extra == "" {
-		return head
+}
+
+func (m *Model) sideBody(width int) string {
+	lines := []string{
+		m.kv(width, "directory", ui.TruncateLeft(m.deps.Stack.WS.Dir, max(width-12, 1))),
+		m.kv(width, "size", util.Bytes(m.ws.SizeBytes)),
 	}
-	return head + "\n" + m.deps.Theme.Muted.Render(extra)
+	if m.ws.HasData && !m.ws.Modified.IsZero() {
+		lines = append(lines, m.kv(width, "updated", util.RelTime(m.ws.Modified)))
+	}
+	if last := m.lastSnap(); last != nil {
+		lines = append(lines, m.kv(width, "snapshot", fmt.Sprintf("%s  ·  %s  ·  %s",
+			last.Name, util.RelTime(last.CreatedAt), util.Bytes(last.SizeBytes))))
+	} else {
+		lines = append(lines, m.kv(width, "snapshot", "no snapshots yet"))
+	}
+	if m.detail {
+		lines = append(lines, "", m.deps.Theme.Header.Render("Detail"), m.detailBody(width))
+	}
+	if m.busy != "" {
+		lines = append(lines, "", m.deps.Theme.StatusWarn.Render(m.busy+"…"))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m *Model) kv(width int, label, value string) string {
+	room := width - 12
+	if room < 1 {
+		room = 1
+	}
+	return m.deps.Theme.Muted.Render(ui.Pad(label, 12)) + ui.Truncate(value, room)
+}
+
+func (m *Model) detailBody(width int) string {
+	if len(m.doctor) > 0 {
+		lines := make([]string, 0, len(m.doctor))
+		for _, c := range m.doctor {
+			mark, text, style := "●", c.Detail, m.deps.Theme.StatusOK
+			if !c.OK {
+				mark, text, style = "✖", c.Error, m.deps.Theme.StatusErr
+			}
+			lines = append(lines, style.Render(mark)+"  "+ui.Pad(c.Name, 16)+"  "+ui.Truncate(text, max(width-20, 1)))
+		}
+		return strings.Join(lines, "\n")
+	}
+	st, ok := m.current()
+	if !ok {
+		return ""
+	}
+	var lines []string
+	if len(st.Argv) > 0 {
+		lines = append(lines, m.kv(width, "command", strings.Join(st.Argv, " ")))
+	}
+	if st.Health != "" {
+		lines = append(lines, m.kv(width, "health", st.Health))
+	}
+	if len(st.DependsOn) > 0 {
+		lines = append(lines, m.kv(width, "depends", strings.Join(st.DependsOn, ", ")))
+	}
+	if st.LastError != "" {
+		lines = append(lines, m.deps.Theme.Muted.Render(ui.Pad("error", 12))+m.deps.Theme.StatusErr.Render(ui.Truncate(st.LastError, max(width-12, 1))))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m *Model) current() (supervisor.Status, bool) {
@@ -323,5 +406,3 @@ func title(name string) string {
 		return name
 	}
 }
-
-func stripSimple(s string) string { return s }

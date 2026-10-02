@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Linux-DEX/azstorecli/internal/components/datatable"
 	"github.com/Linux-DEX/azstorecli/internal/config"
@@ -35,8 +36,6 @@ func New(deps Deps) *Model {
 		{Title: "", Width: 2},
 		{Title: "NAME", Flex: true, MinWidth: 14},
 		{Title: "TYPE", Width: 10},
-		{Title: "ENDPOINT", Width: 28},
-		{Title: "AUTH", Width: 8},
 	})
 	return &Model{deps: deps, table: tbl}
 }
@@ -44,7 +43,7 @@ func New(deps Deps) *Model {
 func (m *Model) Init() tea.Cmd { m.fill(); return nil }
 func (m *Model) Resize(w, h int) {
 	m.w, m.h = w, h
-	m.table.SetSize(w, max(h-8, 4))
+	m.layout()
 }
 func (m *Model) Scope() string { return keymap.ScopeProfiles }
 func (m *Model) ShortHelp() []key.Binding {
@@ -59,13 +58,9 @@ func (m *Model) fill() {
 		if p.Name == store.Active {
 			mark = "●"
 		}
-		lock := ""
-		if p.IsReadOnly() {
-			lock = " 🔒"
-		}
 		rows = append(rows, datatable.Row{
 			ID:    p.Name,
-			Cells: []string{mark, p.Name + lock, string(p.Type), p.BlobEndpoint, string(p.Auth)},
+			Cells: []string{mark, p.Name, string(p.Type)},
 		})
 	}
 	m.table.SetRows(rows)
@@ -217,26 +212,91 @@ func (m *Model) onModal(r msg.ModalResult) tea.Cmd {
 }
 
 func (m *Model) View() string {
-	if m.w <= 0 {
+	if m.w <= 0 || m.h <= 0 {
 		return ""
 	}
-	detail := ""
-	if p, ok := m.current(); ok {
-		detail = strings.Join([]string{
-			"name       " + p.Name,
-			"type       " + string(p.Type),
-			"blob       " + p.BlobEndpoint,
-			"queue      " + p.QueueEndpoint,
-			"table      " + p.TableEndpoint,
-			"auth       " + string(p.Auth),
-			"readonly   " + boolStr(p.IsReadOnly()),
-		}, "\n")
+	leftW, rightW, leftH, rightH := m.split()
+	left := m.pane("Profiles", m.table.View(), leftW, leftH, true)
+	right := m.pane("Selected", m.detailBody(m.inner(rightW)), rightW, rightH, false)
+	if !ui.Wide(m.w) {
+		return lipgloss.JoinVertical(lipgloss.Left, left, right)
 	}
-	warn := ""
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, right)
+}
+
+func (m *Model) layout() {
+	if m.w <= 0 || m.h <= 0 {
+		return
+	}
+	leftW, _, leftH, _ := m.split()
+	frame := m.deps.Theme.Pane.GetVerticalFrameSize() + 1
+	m.table.SetSize(m.inner(leftW), max(leftH-frame, 1))
+}
+
+func (m *Model) split() (leftW, rightW, leftH, rightH int) {
+	if ui.Wide(m.w) {
+		leftW = m.w * 3 / 5
+		return leftW, m.w - leftW, m.h, m.h
+	}
+	leftH = m.h * 2 / 3
+	if leftH < 1 {
+		leftH = 1
+	}
+	rightH = m.h - leftH
+	if rightH < 1 {
+		rightH = 1
+		leftH = max(m.h-1, 1)
+	}
+	return m.w, m.w, leftH, rightH
+}
+
+func (m *Model) inner(paneW int) int {
+	return max(paneW-m.deps.Theme.Pane.GetHorizontalFrameSize(), 1)
+}
+
+func (m *Model) pane(title, body string, width, height int, active bool) string {
+	style := m.deps.Theme.Pane
+	if active {
+		style = m.deps.Theme.PaneActive
+	}
+	innerW := m.inner(width)
+	innerH := height - style.GetVerticalFrameSize() - 1
+	if innerH < 1 {
+		innerH = 1
+	}
+	block := m.deps.Theme.Header.Render(title) + "\n" + ui.Fit(body, innerW, innerH)
+	return style.Width(innerW).Render(block)
+}
+
+func (m *Model) detailBody(width int) string {
+	p, ok := m.current()
+	if !ok {
+		return m.deps.Theme.Muted.Render("no profile selected")
+	}
+	lines := []string{
+		m.kv(width, "name", p.Name),
+		m.kv(width, "type", string(p.Type)),
+		m.kv(width, "auth", string(p.Auth)),
+		m.kv(width, "readonly", boolStr(p.IsReadOnly())),
+		m.kv(width, "blob", p.BlobEndpoint),
+		m.kv(width, "queue", p.QueueEndpoint),
+		m.kv(width, "table", p.TableEndpoint),
+	}
+	if p.Name == m.deps.Stack.Profiles.Active {
+		lines = append([]string{m.deps.Theme.StatusOK.Render("active")}, lines...)
+	}
 	if m.deps.Stack.Profiles.InsecureMode {
-		warn = "\n" + m.deps.Theme.StatusWarn.Render("profiles.yaml is not mode 0600")
+		lines = append(lines, "", m.deps.Theme.StatusWarn.Render("profiles.yaml is not mode 0600"))
 	}
-	return ui.Fit(m.deps.Theme.Header.Render("Connection Profiles")+"\n"+m.table.View()+"\n"+detail+warn, m.w, m.h)
+	return strings.Join(lines, "\n")
+}
+
+func (m *Model) kv(width int, label, value string) string {
+	room := width - 12
+	if room < 1 {
+		room = 1
+	}
+	return m.deps.Theme.Muted.Render(ui.Pad(label, 12)) + ui.Truncate(value, room)
 }
 
 func boolStr(v bool) string {

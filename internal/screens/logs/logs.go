@@ -10,7 +10,6 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Linux-DEX/azstorecli/internal/keymap"
 	"github.com/Linux-DEX/azstorecli/internal/msg"
@@ -56,12 +55,13 @@ func (m *Model) Resize(w, h int) {
 	m.syncViewport()
 }
 
-// chromeLines is the header, plus the filter row when it is on screen.
+// chromeLines is the title and the status row, plus the filter row when
+// it is on screen.
 func (m *Model) chromeLines() int {
 	if m.filtering || m.filter.Value() != "" {
-		return 2
+		return 3
 	}
-	return 1
+	return 2
 }
 
 func (m *Model) syncViewport() {
@@ -207,28 +207,41 @@ func (m *Model) reload() tea.Cmd {
 
 func (m *Model) render() {
 	expr := strings.TrimSpace(m.filter.Value())
+	width := m.w
+	if width <= 0 {
+		width = 80
+	}
 	var buf strings.Builder
 	for _, l := range m.lines {
 		if !matchLine(l, expr) {
 			continue
 		}
-		tag := "AZ"
-		if l.Process == "functions" {
-			tag = "FN"
-		}
-		line := l.Text
-		if m.times {
-			line = l.At.Format("15:04:05") + "  " + tag + "  " + line
-		}
-		if !m.wrap && m.w > 0 {
-			line = ui.Truncate(line, m.w)
-		}
-		buf.WriteString(colorize(m.deps.Theme, line) + "\n")
+		buf.WriteString(m.formatLine(l, width) + "\n")
 	}
-	m.vp.SetContent(buf.String())
+	m.vp.SetContent(strings.TrimRight(buf.String(), "\n"))
 	if !m.paused {
 		m.vp.GotoBottom()
 	}
+}
+
+// formatLine keeps the clock and the source in fixed columns and colors
+// only the message, so a warning does not paint the timestamp.
+func (m *Model) formatLine(l supervisor.LogLine, width int) string {
+	tag := "AZ"
+	if l.Process == "functions" {
+		tag = "FN"
+	}
+	prefix := tag
+	col := 4
+	if m.times {
+		prefix = l.At.Format("15:04:05") + "  " + tag
+		col = 14
+	}
+	text := l.Text
+	if !m.wrap && width > col {
+		text = ui.Truncate(text, width-col)
+	}
+	return m.deps.Theme.Muted.Render(ui.Pad(prefix, col-2)) + "  " + colorize(m.deps.Theme, text)
 }
 
 func (m *Model) save() tea.Cmd {
@@ -247,22 +260,37 @@ func (m *Model) View() string {
 		return ""
 	}
 	m.syncViewport()
+	var b strings.Builder
+	b.WriteString(m.deps.Theme.Header.Render("Logs"))
+	b.WriteString("\n")
+	b.WriteString(m.statusLine())
+	if m.filtering || m.filter.Value() != "" {
+		b.WriteString("\n")
+		b.WriteString(m.deps.Theme.Muted.Render(ui.Pad("filter", 8)) + m.filter.View())
+	}
+	b.WriteString("\n")
+	b.WriteString(m.vp.View())
+	// The body must be exactly m.h lines. A short view lets the tab bar
+	// float up when this screen is focused.
+	return fillHeight(b.String(), m.h)
+}
+
+func (m *Model) statusLine() string {
 	src := "all"
 	if m.source != "" {
 		src = m.source
 	}
-	pause := "▶ live"
+	state := "live"
+	style := m.deps.Theme.StatusOK
 	if m.paused {
-		pause = "⏸ paused"
+		state = "paused"
+		style = m.deps.Theme.StatusWarn
 	}
-	head := m.deps.Theme.Header.Render("Logs  [" + src + "]  " + pause + "  " + itoa(len(m.lines)) + " lines")
-	foot := ""
-	if m.filtering || m.filter.Value() != "" {
-		foot = "\nfilter: " + m.filter.View()
-	}
-	// The body must be exactly m.h lines. A short view lets the tab bar
-	// float up when this screen is focused.
-	return fillHeight(lipgloss.JoinVertical(lipgloss.Left, head, m.vp.View()+foot), m.h)
+	return m.field("source", src) + m.field("state", style.Render(state)) + m.field("lines", itoa(len(m.lines)))
+}
+
+func (m *Model) field(label, value string) string {
+	return m.deps.Theme.Muted.Render(ui.Pad(label, 8)) + ui.Pad(value, 12)
 }
 
 func fillHeight(s string, h int) string {

@@ -15,7 +15,11 @@ func TestViewStaysFullHeight(t *testing.T) {
 		t.Fatalf("lines %d, want 20", n)
 	}
 	m.filtering = true
-	if n := len(strings.Split(m.View(), "\n")); n != 20 {
+	view := m.View()
+	if n := len(strings.Split(view, "\n")); n != 20 {
 		t.Fatalf("filter lines %d, want 20", n)
+	}
+	if !strings.Contains(view, "source") || !strings.Contains(view, "state") || !strings.Contains(view, "filter") {
+		t.Fatalf("status row missing:\n%s", view)
 	}
 }
